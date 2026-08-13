@@ -1,17 +1,30 @@
 'use server'
 
-import { db, trades } from '@/lib/db'
+import { db, checklistItems, trades } from '@/lib/db'
 import { and, eq, inArray } from 'drizzle-orm'
 import { uuidArray } from '@/lib/validation'
 import { authedAction, ValidationError } from '@/lib/safe-action'
 import { t } from '@/i18n'
 import { realizedR } from '@/lib/r-multiple'
+import { readGlobalSettings } from '@/lib/global-settings'
+import { dayKeyInTz } from '@/lib/date-tz'
+import { criteriaDayOf, loadChecklistItems } from '@/lib/adherence-server'
+import {
+  applicableInBlock,
+  tradeProgress,
+  CHECKLIST_BLOCKS,
+  type ChecklistBlock,
+  type ChecklistItem,
+  type ChecklistProgress,
+} from '@/lib/adherence'
 import {
   MAX_BUNDLE_TRADES,
   TRADE_BUNDLE_FORMAT,
   TRADE_BUNDLE_VERSION,
   derivedExternalId,
   matchKey,
+  type BundleAdherence,
+  type BundleChecklistItem,
   type BundleStrategy,
   type BundleTagGroup,
   type BundleTrade,
@@ -20,29 +33,50 @@ import {
 
 // ─── Export to CSV ────────────────────────────────────────────────────────────
 
-function adherence(
-  progress: { entry: string[]; exit: string[] } | null,
-  entryChecklist: string[] | null,
-  exitChecklist: string[] | null,
-): { entry: string; exit: string } {
-  const fmt = (ticked: string[] | undefined, all: string[] | null) => {
-    if (!all || all.length === 0) return ''
-    const live = (ticked ?? []).filter((t) => all.includes(t))
-    return `${live.length}/${all.length}`
+/**
+ * One `met/applicable` cell per block, empty where the block didn't apply or was never
+ * assessed — `0/7` would read as indiscipline rather than as an unreviewed trade.
+ */
+function adherenceCells(
+  trade: { strategyId: string | null; createdAt: Date; checklistProgress: ChecklistProgress | null },
+  items: ChecklistItem[],
+  tz: string | null,
+): Record<ChecklistBlock, string> {
+  const scope = {
+    strategyId: trade.strategyId,
+    criteriaDay: criteriaDayOf(trade, tz),
+    progress: trade.checklistProgress,
   }
-  return { entry: fmt(progress?.entry, entryChecklist), exit: fmt(progress?.exit, exitChecklist) }
+  const progress = tradeProgress(scope, items)
+  const cells = {} as Record<ChecklistBlock, string>
+  for (const block of CHECKLIST_BLOCKS) {
+    const applicable = applicableInBlock(items, scope, block)
+    const state = progress.blocks[block]
+    if (applicable.length === 0 || !state.scored) {
+      cells[block] = ''
+      continue
+    }
+    const met = new Set(state.met)
+    cells[block] = `${applicable.filter((i) => met.has(i.id)).length}/${applicable.length}`
+  }
+  return cells
 }
 
 export const exportTradesToCsv = authedAction([uuidArray.optional()], async ({ userId }, ids): Promise<string> => {
-  const rows = await db.query.trades.findMany({
-    where: ids && ids.length > 0 ? and(eq(trades.userId, userId), inArray(trades.id, ids)) : eq(trades.userId, userId),
-    orderBy: (t, { asc }) => [asc(t.entryDatetime)],
-    with: {
-      strategy: { columns: { name: true, entryChecklist: true, exitChecklist: true } },
-      account: { columns: { name: true } },
-      tradeTags: { with: { tag: { columns: { name: true } } } },
-    },
-  })
+  const { timezone } = await readGlobalSettings()
+  const [rows, items] = await Promise.all([
+    db.query.trades.findMany({
+      where:
+        ids && ids.length > 0 ? and(eq(trades.userId, userId), inArray(trades.id, ids)) : eq(trades.userId, userId),
+      orderBy: (t, { asc }) => [asc(t.entryDatetime)],
+      with: {
+        strategy: { columns: { name: true } },
+        account: { columns: { name: true } },
+        tradeTags: { with: { tag: { columns: { name: true } } } },
+      },
+    }),
+    loadChecklistItems(userId, timezone),
+  ])
 
   const headers = [
     'Symbol',
@@ -66,7 +100,8 @@ export const exportTradesToCsv = authedAction([uuidArray.optional()], async ({ u
     'R Multiple',
     'Setup',
     'Strategy',
-    'Entry Adherence',
+    'Gate Adherence',
+    'Setup Adherence',
     'Exit Adherence',
     'Account',
     'Tags',
@@ -84,7 +119,7 @@ export const exportTradesToCsv = authedAction([uuidArray.optional()], async ({ u
   }
 
   const csvRows = rows.map((t) => {
-    const adh = adherence(t.checklistProgress, t.strategy?.entryChecklist ?? null, t.strategy?.exitChecklist ?? null)
+    const adh = adherenceCells(t, items, timezone)
     const r = realizedR(t.netPnl, t.riskAmount)
     const mult = (t.extra as { contractMultiplier?: unknown } | null)?.contractMultiplier
     return [
@@ -109,7 +144,8 @@ export const exportTradesToCsv = authedAction([uuidArray.optional()], async ({ u
       escape(r === null ? '' : r.toFixed(4)),
       escape(t.setupName),
       escape(t.strategy?.name),
-      escape(adh.entry),
+      escape(adh.gate),
+      escape(adh.setup),
       escape(adh.exit),
       escape(t.account?.name),
       escape(t.tradeTags.map((tt) => tt.tag.name).join('; ')),
@@ -135,17 +171,37 @@ export const exportTradesToCsv = authedAction([uuidArray.optional()], async ({ u
 export const exportTradesToBundle = authedAction(
   [uuidArray.optional()],
   async ({ userId }, ids): Promise<TradeBundle> => {
-    const rows = await db.query.trades.findMany({
-      where:
-        ids && ids.length > 0 ? and(eq(trades.userId, userId), inArray(trades.id, ids)) : eq(trades.userId, userId),
-      orderBy: (t, { asc }) => [asc(t.entryDatetime)],
-      with: {
-        strategy: true,
-        account: { columns: { name: true } },
-        tradeTags: { with: { tag: { with: { group: true } } } },
-        screenshots: true,
-      },
-    })
+    const { timezone } = await readGlobalSettings()
+    const [rows, itemRows] = await Promise.all([
+      db.query.trades.findMany({
+        where:
+          ids && ids.length > 0 ? and(eq(trades.userId, userId), inArray(trades.id, ids)) : eq(trades.userId, userId),
+        orderBy: (t, { asc }) => [asc(t.entryDatetime)],
+        with: {
+          strategy: true,
+          account: { columns: { name: true } },
+          tradeTags: { with: { tag: { with: { group: true } } } },
+          screenshots: true,
+        },
+      }),
+      // Archived criteria too, or a restored journal would re-score history against
+      // today's checklist.
+      db.query.checklistItems.findMany({
+        where: eq(checklistItems.userId, userId),
+        with: { strategy: { columns: { name: true } } },
+      }),
+    ])
+    const items = itemRows.map((r) => ({
+      id: r.id,
+      strategyId: r.strategyId,
+      block: r.block,
+      label: r.label,
+      definition: r.definition,
+      sortOrder: r.sortOrder,
+      effectiveFrom: r.effectiveFrom,
+      archivedDay: r.archivedAt ? dayKeyInTz(r.archivedAt, timezone) : null,
+    }))
+    const labelById = new Map(items.map((i) => [i.id, i.label]))
 
     // Refuse to write a file our own importer would reject. Silently producing
     // an un-restorable backup is the worst possible failure for this feature —
@@ -164,10 +220,10 @@ export const exportTradesToBundle = authedAction(
         strategies.set(matchKey(t.strategy.name), {
           name: t.strategy.name,
           description: t.strategy.description ?? null,
-          // The deprecated flat `checklist` is folded into the entry list rather
-          // than dropped: on an old journal it is the only playbook there is.
-          entryChecklist: t.strategy.entryChecklist ?? t.strategy.checklist ?? null,
-          exitChecklist: t.strategy.exitChecklist ?? null,
+          // Criteria travel in the bundle's own `checklistItems` now; these two fields
+          // remain for version-1 readers only.
+          entryChecklist: null,
+          exitChecklist: null,
           imageUrls: t.strategy.imageUrls ?? (t.strategy.imageUrl ? [t.strategy.imageUrl] : null),
           color: t.strategy.color ?? null,
           sortOrder: t.strategy.sortOrder ?? null,
@@ -209,7 +265,15 @@ export const exportTradesToBundle = authedAction(
         riskRewardRatio: t.riskRewardRatio ?? null,
         riskAmount: t.riskAmount ?? null,
 
-        checklistProgress: t.checklistProgress ?? null,
+        checklistProgress: portableProgress(
+          {
+            strategyId: t.strategyId,
+            criteriaDay: criteriaDayOf(t, timezone),
+            progress: t.checklistProgress,
+          },
+          items,
+          labelById,
+        ),
 
         setupName: t.setupName ?? null,
         notes: t.notes ?? null,
@@ -237,7 +301,41 @@ export const exportTradesToBundle = authedAction(
       source: { app: 'tradenza', account: rows[0]?.account?.name ?? undefined },
       tagGroups: [...tagGroups.values()],
       strategies: [...strategies.values()],
+      checklistItems: itemRows.map<BundleChecklistItem>((r) => ({
+        strategy: r.strategy?.name ?? null,
+        block: r.block,
+        label: r.label,
+        definition: r.definition,
+        sortOrder: r.sortOrder,
+        effectiveFrom: r.effectiveFrom,
+      })),
       trades: bundleTrades,
     }
   },
 )
+
+/**
+ * Stored progress in portable, label-keyed form. Row ids mean nothing in another journal:
+ * carrying them would import as "assessed, nothing met", a fabricated record of
+ * indiscipline. Unmatched labels simply drop.
+ */
+function portableProgress(
+  trade: { strategyId: string | null; criteriaDay: string; progress: ChecklistProgress | null },
+  items: ChecklistItem[],
+  labelById: Map<string, string>,
+): BundleAdherence | null {
+  if (!trade.progress) return null
+  const progress = tradeProgress(trade, items)
+  const block = (b: ChecklistBlock) => ({
+    scored: progress.blocks[b].scored,
+    met: progress.blocks[b].met.flatMap((id) => {
+      const label = labelById.get(id)
+      return label ? [label] : []
+    }),
+    scoredAt: progress.blocks[b].scoredAt,
+  })
+  return {
+    v: 2,
+    blocks: { gate: block('gate'), setup: block('setup'), exit: block('exit') },
+  }
+}

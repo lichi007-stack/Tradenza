@@ -131,7 +131,7 @@ The trade detail screen is the journaling heart of the app:
 - **Notes tabs** — structured journaling split into setup, emotions (before / after), mistakes, and lessons, with a rich-text editor and **autosave** (`useAutosave`).
 - **Star rating** — a quick subjective grade of execution quality.
 - **Tags panel** — assign tags and categories.
-- **Strategy & playbook** — link the trade to one of your strategies, then tick off its **entry** and **exit** checklist items as you review. The trade records how faithfully you followed the plan, which rolls up into per-strategy adherence stats.
+- **Strategy & adherence** — link the trade to one of your strategies, then work through the three adherence blocks (gate / setup / exit). Each block is explicitly **confirmed** when you're done with it, which is what admits it to the statistics; see §4.6.
 - **Customizable sidebar** — a gear-menu (`SidebarSettings`, dnd-kit) lets the trader show, hide and drag-to-reorder every sidebar panel (running P&L, strategy, details, risk, tags) and individual stat row (R, ROI, MAE/MFE, entry/exit times, star rating…), with a one-click reset. Preferences are saved to the user's account (`SidebarPrefs`), so a review layout persists across trades and sessions rather than living in one browser.
 
 The structure nudges the trader past "did I win?" toward "did I execute well, and what do I repeat or avoid?".
@@ -197,34 +197,79 @@ Dashboard (glanceable) ↔ Statistics (deep dive)
 Strategies → Strategy [id] ↔ Trade detail (assign + tick checklist)
 ```
 
-Where Discipline tracks daily process, **Strategies** capture the specific setups a trader repeats — turning a loose "plan" into something measurable:
+Where Discipline tracks daily process, **Strategies** capture the specific setups a trader repeats — turning a loose "plan" into something measurable. The area has three tabs — **Setups**, **Adherence** and **Criteria** — mirroring the Discipline page's structure: the thing, the measurement, and the definitions.
 
 - Define a **strategy** with a name, a written description of its rules, a color, and up to a handful of **reference screenshots** of the ideal setup.
-- Split the plan into the two decisions it actually governs: an **entry checklist** (what makes a valid entry) and an **exit checklist** (how and when to get out). Both are optional.
-- Assign a strategy to each trade and, during review, tick off the checklist items you genuinely followed. Adherence is stored per trade, so the strategy page can show not just _how_ that setup performs (its own P&L, win rate, expectancy) but _how closely you actually traded it_ — separating a losing edge from poor execution of a good one.
+- Define the **criteria** a trade is measured against. A setup's own criteria — in any of the three blocks — can be typed straight into the strategy form, a setup and the checks that define it being one thought; sending the user to another tab to finish is where the checklist ends up empty. The **Criteria** tab remains the full manager: the universal blocks, reordering, retiring and the fix-vs-replace question an inline field has no room to ask.
 - Retired setups can be **archived**: they leave the active list and their trades keep the (now-unlinked) history, so past statistics stay intact — the same non-destructive pattern used for accounts and discipline rules.
 
 This closes the loop with the journal: the strategy defines the plan, the trade detail records the execution, and the stats reveal the gap between the two.
+
+#### Adherence: three blocks, never one number
+
+A single "adherence 87%" is diagnostically dead — it cannot tell you whether you broke your own risk rules, misread the chart, or fumbled the exit, which is the only thing the number is for. Adherence is therefore measured, stored and displayed in **three independent blocks**, and nothing in the app averages them:
+
+| Block                  | Question                                        | Scope                            |
+| ---------------------- | ----------------------------------------------- | -------------------------------- |
+| **G · Gate**           | Was I allowed to take this trade at all?        | Universal — every setup          |
+| **S · Setup read**     | Did the chart actually show this setup?         | Per strategy                     |
+| **E · Exit execution** | How did I manage the position once it was open? | Universal (extendable per setup) |
+
+The order is the diagnosis. Every block below a failing one is unreadable: if the gate leaks, the exit statistics describe trades that should never have been taken. A rules verdict (`diagnose`) states this as one sentence at the top of both the strategy page and the Adherence tab — and its most important line is the one that says **"small sample, change nothing"**, because that sentence is what stands between a bad fortnight and a rewritten playbook.
+
+**Not reviewed is not zero.** Each block carries its own _reviewed / not reviewed_ state on the trade, said in a sentence under the heading rather than hidden in a badge tooltip — it is the one thing a user has to understand for the numbers elsewhere to mean what they say. Until the block is confirmed, the block contributes to no average and unticked criteria are drawn as blank rather than as failures; once evaluated, they are drawn as **misses**, which is the confrontation the journal exists for. Without that distinction, adherence measured how diligently someone journalled — an imported trade nobody ever opened read as total indiscipline.
+
+**Coverage always travels with adherence.** Every aggregate prints "reviewed on 34 of 41 trades" beside the percentage, because 96% over the trades that were easy to fill in is a selection effect, not a result.
+
+**The review window: criteria follow the day a trade was _recorded_, then lock.** The clock runs from when a trade entered the journal, not from when it was taken, and it runs for 24 hours. Inside that window the trade follows the live checklist — write a setup's criteria and then log yesterday's trades (or a whole backtest run) and they are measured against what you just wrote, and editing a criterion still reaches them. When the window closes, the checklist for that trade is **locked**: later edits never touch it, and no further review can be recorded against it. That last part is the point. Adherence is a claim about what you decided at the time; a checklist you can fill in three months later is a claim about what you can remember, which is worth nothing — so the server refuses the write rather than merely hiding the buttons. The panel says which state a trade is in (a countdown while open, a plain "review closed" after), criteria written since a lock are listed greyed under their block so their absence never reads as a bug, and the review queue skips locked trades rather than growing a permanent backlog of work nobody can do. Nothing is snapshotted: because the lock is derived from the recording time, the criteria a locked trade was judged by are always recomputable. Chronology still uses the entry date, so the adherence trend is drawn where the trades actually sit.
+
+**Criteria are versioned, and edits are forward-only.** Progress used to be keyed by the criterion's _text_, so rewording one detached every trade that had ever ticked it and the sample reset itself on every edit. Criteria now have stable ids plus `effectiveFrom` / `archivedAt` day bounds, and a trade only counts the criteria that existed on the day it was entered. On an edit the app asks the one question it cannot infer: **fix the wording** (same criterion, id and history preserved) or **replace it** (the old one retires today, a new one starts today). Retiring a criterion likewise stops it applying from today while it keeps counting toward the trades it governed — the same forward-only rule the discipline module follows.
+
+**No setup, no checklist.** A trade with no strategy assigned is measured against nothing — not even the universal blocks — and the panel says so instead of offering an empty list. Adherence asks how faithfully you followed _a setup_; with none named there is nothing to be faithful to, and "did the chart show it?" has no subject. Scoring the gate alone would also quietly split the sample: half the trades judged on three blocks, half on two, averaged as if they were the same measurement. So an unassigned trade sits outside every adherence figure, outside the review queue and outside the coverage denominator until a setup is picked — at which point its whole checklist appears.
+
+**Universal by default, per-setup where it matters.** A criterion with no strategy applies to every setup (`strategyId = null`), so the gate is written once instead of copied into each playbook — and it is still scored **per strategy** on the strategy page, because "my exit falls apart on this one setup" is one of the most useful things the model can say. But any block may also be scoped to a strategy: a trend-continuation setup and a mean-reversion one demand different market regimes, and a runner is managed nothing like a scalp. Scoped criteria **add to** the universal ones rather than replacing them, and comparability survives because a trade is always measured against the criteria that applied to _it_.
+
+**A verdict waits for the same evidence as everything else.** The blocks are diagnosed in precedence order, but only blocks with at least **10 reviewed trades** can be blamed — otherwise the order became a trap: a gate reviewed once at 22% would out-shout a setup block measured over twenty, and the page would withhold a per-criterion table for want of a sample while, two inches above it, naming the part of the trading to fix. When something is below target but no block is measured well enough, the banner says exactly that and names where to keep reviewing, rather than picking the next block down. Every block verdict also prints the figures behind it — "The setup itself: 33% over 22 reviews · target 85%" — so the sentence can be checked against its sample.
+
+**Statistical honesty over ambition.** Per-criterion outcome splits stay hidden until a block has **20 reviewed trades**, each side of a followed-vs-skipped comparison needs **10** before it is shown unfaded, and the previous three-trade threshold is gone — on three trades a coin flip "proves" something about half the time. Even when two win rates separate by non-overlapping Wilson intervals, the UI says _followed vs. skipped_ and never _this criterion hurts_: with a dozen-plus criteria compared at once, some separate by chance. What is honest on a small sample is which criteria you wave through most often, and the rolling per-block average — so those are what the Adherence tab leads with, and the correlation with R is deliberately absent.
+
+**The by-setup list is also the filter.** Each setup in it carries a checkbox: untick one and the rings, the verdict, the trend and the most-skipped list drop its trades and reload. The rows themselves keep their own figures either way — a hidden setup can still be read and brought back — and unticking everything says so with the way back attached, rather than dropping the user into the generic "nothing in this filter" state with no list left to undo it.
+
+**The trend is drawn by day, on a time axis.** "Adherence over time" plots one point per **day** that had a reviewed trade, each the average of that day's trades per block. Days rather than trades because that is the axis the question lives on — _am I drifting?_ is asked about weeks, not about trade #37 — and because a day is a natural unit of discipline: you trade a session in one state of mind. Averaging within the day also damps the single-trade spikes that made a per-trade line unreadable.
+
+Past 60 points the days are **folded into equal steps** (2, 3, 7, 14, 30 days) so a year doesn't arrive as 365 wiggles; the tooltip then names the span it covers rather than pretending to be one day, and the hint says which step is in force. A bucket averages the _trades_ inside it, not the day means inside it — weighting every day equally would let a one-trade Tuesday outvote a twelve-trade Wednesday.
+
+Gaps are gone by construction: days with nothing reviewed emit no point, and the points that remain are spaced **evenly** — the axis reads as _the days you traded, in order_ rather than as a calendar, so weekends, holidays and a fortnight off don't stretch the line into a row of plateaus. Dates stay on the ticks and in the tooltip, so the calendar is never far away. What the line still refuses to do is invent data — the tooltip carries the number of trades behind every point, and a block you never review has no line at all.
+
+**The review queue is a first-class surface.** Coverage is what makes every adherence figure trustworthy, so the trades still waiting on a review are never more than a click away: a **G S E** chip trio sits on each row of the trades table, the strategy page's trade list and the day review; a "_N_ trades to review" chip above the trades list filters to the untouched ones; and the dashboard widget links to the same queue. The chips carry no percentage — a score in a list invites ranking trades by adherence, which is not what it is for — and a block with no criteria on that trade's date is greyed rather than hidden, so a column of them stays scannable. The filter is deliberately **local to the trades list** rather than a global header filter: the header filters feed every statistic in the app, and excluding reviewed trades there would silently reshape P&L.
+
+**Filling a block is cheap by design.** Actions sit below the criteria in the order the work happens — tick what held, then _Confirm review_ — with an **All held** shortcut for the common case. Nineteen individual clicks per trade is what stops a journal being filled in at all, and a block nobody fills in contributes nothing either way.
+
+**Reviewing is retrospective, and the app treats that as normal.** Tradenza is a journal of trades that already happened, not an order ticket: every block is filled in after the close, so flagging that would put a warning on every trade in the database. The review window is what keeps the delay honest instead — inside it the review is a record of a decision, outside it there is no review to give.
+
+**A template covers the blank page.** The universal gate and exit blocks can be filled from a starting set of near-universal intraday checks, phrased the way the model requires (binary, observable at one moment, no "and"/"or" in a line). It only fills blocks that are still empty, so pressing it twice can't duplicate anything, and everything it creates is editable and retirable like any other criterion. The setup block has no template — that one is yours, and no template can guess it.
+
+**Entries are recorded retrospectively, and nothing is auto-detected.** The app could infer a handful of the criteria from data it already has (entry time, planned R, position size, breakeven from MFE), and deliberately doesn't: it would introduce a second, silent failure mode — a false negative from data that doesn't quite fit — and mix two different kinds of UX. Like the discipline module, this rests on the user's own honesty.
 
 ---
 
 ## 5. Screen reference
 
-| Screen                 | Route                                  | Purpose                                                                            |
-| ---------------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
-| **Landing**            | `/`                                    | Marketing + entry point; CTAs to sign up / dashboard.                              |
-| **Sign in / Sign up**  | `/sign-in`, `/sign-up`                 | Clerk-hosted auth, themed to match the app.                                        |
-| **Dashboard**          | `/dashboard`                           | Customizable widget grid; glanceable performance overview.                         |
-| **Trades**             | `/trades`                              | Filterable, sortable, paginated trade table with summary stat cards; bulk actions. |
-| **Trade detail**       | `/trades/[id]`                         | Chart, executions, running P&L, structured notes, rating, tags.                    |
-| **Add trade**          | `/add-trade`, `/add-trade/[accountId]` | Quick single-trade entry.                                                          |
-| **Trade import**       | `/trade-import/*`                      | Guided multi-step CSV/manual import wizard.                                        |
-| **Statistics**         | `/stats`                               | Full statistical breakdown of the filtered trade set.                              |
-| **Discipline**         | `/progress`, `/progress/[date]`        | Trading rules and daily habits, day reviews, streaks, year heatmaps, payoff views. |
-| **Strategies**         | `/strategies`, `/strategies/[id]`      | Strategy playbooks (entry/exit checklists, reference images) + per-strategy stats. |
-| **Accounts**           | `/accounts`                            | List and manage trading accounts (prop-firm model).                                |
-| **Settings**           | `/settings/*`                          | Accounts, tags & categories, trade settings, global settings, import history.      |
-| **Admin** _(internal)_ | `/admin`, `/admin/feedback`            | Maintainer-only user & feedback overview.                                          |
+| Screen                 | Route                                  | Purpose                                                                                        |
+| ---------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Landing**            | `/`                                    | Marketing + entry point; CTAs to sign up / dashboard.                                          |
+| **Sign in / Sign up**  | `/sign-in`, `/sign-up`                 | Clerk-hosted auth, themed to match the app.                                                    |
+| **Dashboard**          | `/dashboard`                           | Customizable widget grid; glanceable performance overview.                                     |
+| **Trades**             | `/trades`                              | Filterable, sortable, paginated trade table with summary stat cards; bulk actions.             |
+| **Trade detail**       | `/trades/[id]`                         | Chart, executions, running P&L, structured notes, rating, tags.                                |
+| **Add trade**          | `/add-trade`, `/add-trade/[accountId]` | Quick single-trade entry.                                                                      |
+| **Trade import**       | `/trade-import/*`                      | Guided multi-step CSV/manual import wizard.                                                    |
+| **Statistics**         | `/stats`                               | Full statistical breakdown of the filtered trade set.                                          |
+| **Discipline**         | `/progress`, `/progress/[date]`        | Trading rules and daily habits, day reviews, streaks, year heatmaps, payoff views.             |
+| **Strategies**         | `/strategies`, `/strategies/[id]`      | Setups, per-block adherence and the criteria that define it (three tabs) + per-strategy stats. |
+| **Accounts**           | `/accounts`                            | List and manage trading accounts (prop-firm model).                                            |
+| **Settings**           | `/settings/*`                          | Accounts, tags & categories, trade settings, global settings, import history.                  |
+| **Admin** _(internal)_ | `/admin`, `/admin/feedback`            | Maintainer-only user & feedback overview.                                                      |
 
 ### The customizable dashboard (in depth)
 
@@ -290,3 +335,16 @@ This lets each trader build the cockpit that matches how _they_ think, instead o
 | **Confirmed day** | A day you engaged with — ticked or flagged a rule, or marked it reviewed. Only confirmed days feed the discipline→P&L payoff.                  |
 | **Excused day**   | A day marked _not counted_ (holiday, illness). Carries a scope: whole day, trading only, or daily only. Evidence you turned up beats the flag. |
 | **Forward-only**  | Creating, pausing, archiving or rescheduling a rule applies from today and never re-scores a day already lived through.                        |
+
+### Adherence vocabulary
+
+| Term                | Meaning                                                                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Block**           | One of three independent measurements — **gate**, **setup read**, **exit execution**. Never averaged into a single adherence figure.           |
+| **Criterion**       | One binary check inside a block. Has a stable id and effective dates, so rewording it can't detach the trades that ticked it.                  |
+| **Universal**       | A criterion with no strategy: it applies to every setup, and is therefore defined once rather than copied into each playbook.                  |
+| **Reviewed**        | The user has confirmed this block on this trade. Only then does it enter any average — and only then is an unticked criterion shown as a miss. |
+| **Coverage**        | How many of the applicable trades a block was actually reviewed on. Always printed beside the percentage.                                      |
+| **Fix vs. replace** | The choice offered when editing a criterion: keep its identity and history, or retire it today and start a new one.                            |
+| **Weakest block**   | The single sortable value derived from the three — their minimum, never their mean, and labelled as such.                                      |
+| **Review queue**    | Trades where none of the three blocks has been confirmed. Surfaced as a chip on the trades list, in the dashboard widget, and as a filter.     |

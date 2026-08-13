@@ -31,10 +31,10 @@
   "features": {
     "kicker": "And more",
     "heading": "Everything else you'd expect",
-    "subheading": "Beyond the dashboard, journal and discipline tracker — playbooks, daily reviews, analytics and the tooling that makes logging fast and keeps your data yours.",
+    "subheading": "Beyond the dashboard, journal and discipline tracker — playbooks, adherence scoring, daily reviews, analytics and the tooling that makes logging fast and keeps your data yours.",
     "strategies": {
       "title": "Strategies & playbooks",
-      "desc": "Define each setup you trade as a reusable strategy with entry and exit checklists and reference screenshots. Assign it to trades, tick off what you actually followed, and review per-strategy stats and how closely you stuck to the plan."
+      "desc": "Define each setup you trade as a reusable strategy with a written plan, reference screenshots. Assign it to trades and review per-strategy P&L, win rate and expectancy — so a losing setup and a well-traded one you keep fumbling stop looking the same."
     },
     "import": {
       "title": "Flexible import",

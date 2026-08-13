@@ -15,8 +15,13 @@
     "exit": "Exit",
     "date": "Date",
     "strategy": "Strategy",
+    "review": "Review",
     "rmultiple": "R-Multiple",
     "pnl": "P&L"
+  },
+  "review": {
+    "filter": "{count, plural, one {# trade to review} other {# trades to review}}",
+    "filterActive": "Showing trades to review — clear"
   },
   "empty": "No trades found.",
   "emptyFilters": "Try adjusting or clearing the filters.",
@@ -165,12 +170,6 @@
         "tags": "Tags",
         "strategy": "Strategy"
       }
-    },
-    "playbook": {
-      "checklistTitle": "Setup checklist",
-      "progress": "{done}/{total}",
-      "checkAll": "Check all",
-      "uncheckAll": "Uncheck all"
     },
     "exec": {
       "title": "Executions",

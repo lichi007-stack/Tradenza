@@ -24,6 +24,7 @@ import DayStatusBadge from './DayStatusBadge'
 import UiTooltip from '@/components/ui/Tooltip'
 import AwayScopePicker from './AwayScopePicker'
 import AwayRangeDialog from './AwayRangeDialog'
+import ReviewChips from '@/components/adherence/ReviewChips'
 
 function formatDateHeader(date: string) {
   return new Date(`${date}T00:00:00`).toLocaleDateString(getUiLocale(), {
@@ -309,6 +310,9 @@ export default function DayReviewClient({
                     </span>
                   </span>
                 </div>
+                {/* The day review is where the reviewing gets done, so the chips are here
+                    rather than only on the filtered trades list. */}
+                <ReviewChips states={tr.review} locked={tr.reviewLocked} />
                 <span
                   className={cn(
                     'shrink-0 whitespace-nowrap text-sm tabular font-medium',

@@ -13,7 +13,8 @@ import { t } from '@/i18n'
 import { isR2Configured, copyR2Object } from '@/lib/r2'
 import { r2KeyBelongsTo, r2KeyFromUrl, r2KeysFromHtml, rewriteHtmlImageUrls } from '@/lib/r2-keys'
 import { tradeBundleSchema, derivedExternalId, matchKey, tagKey, type BundleTrade } from '@/lib/trade-bundle'
-import { resolveStrategyIds, resolveTagIds } from './reference-resolve'
+import type { ChecklistBlock, ChecklistProgressV2 } from '@/lib/adherence'
+import { checklistItemKey, resolveChecklistItemIds, resolveStrategyIds, resolveTagIds } from './reference-resolve'
 import { existingExternalIds, LINK_CHUNK } from './import-dedup'
 import { indexByExternalId, type InsertedTrade } from '@/lib/import-identity'
 
@@ -128,6 +129,50 @@ interface PreparedTrade {
   shots: { userId: string; url: string; label: string | null; sortOrder: number }[]
 }
 
+/**
+ * Rebuild the trade's adherence against the receiving journal's criteria: the bundle keys
+ * progress by text, so this turns it back into ids. A criterion is looked up under the
+ * trade's strategy first, then among the universal ones; unmatched text drops.
+ */
+function restoreProgress(
+  tr: BundleTrade,
+  strategyName: string | null,
+  items: Map<string, string>,
+): ChecklistProgressV2 | null {
+  const raw = tr.checklistProgress
+  if (!raw) return null
+
+  const idsFor = (block: ChecklistBlock, labels: string[]): string[] =>
+    labels.flatMap((label) => {
+      const own = strategyName ? items.get(checklistItemKey(strategyName, block, label)) : undefined
+      const id = own ?? items.get(checklistItemKey(null, block, label))
+      return id ? [id] : []
+    })
+
+  if (!('v' in raw)) {
+    // Version-1 progress has no way to say "not assessed": setup and exit count as
+    // scored, gate stays unscored because it did not exist then.
+    return {
+      v: 2,
+      blocks: {
+        gate: { scored: false, met: [], scoredAt: null },
+        setup: { scored: true, met: idsFor('setup', raw.entry), scoredAt: null },
+        exit: { scored: true, met: idsFor('exit', raw.exit), scoredAt: null },
+      },
+    }
+  }
+
+  const block = (b: ChecklistBlock) => ({
+    scored: raw.blocks[b].scored,
+    met: idsFor(b, raw.blocks[b].met),
+    scoredAt: raw.blocks[b].scoredAt,
+  })
+  return {
+    v: 2,
+    blocks: { gate: block('gate'), setup: block('setup'), exit: block('exit') },
+  }
+}
+
 function tradeValues(
   userId: string,
   accountId: string,
@@ -135,6 +180,7 @@ function tradeValues(
   externalId: string,
   strategyId: string | null,
   notes: string | null,
+  progress: ChecklistProgressV2 | null,
 ): typeof trades.$inferInsert {
   return {
     userId,
@@ -157,7 +203,7 @@ function tradeValues(
     takeProfit: tr.takeProfit,
     riskRewardRatio: tr.riskRewardRatio,
     riskAmount: tr.riskAmount,
-    checklistProgress: tr.checklistProgress,
+    checklistProgress: progress,
     setupName: tr.setupName,
     notes,
     rating: tr.rating,
@@ -204,6 +250,26 @@ export const importTradesBundle = importAction(
       bundle.tagGroups,
     )
 
+    // A version-1 bundle has no `checklistItems`; its strategies' text arrays are seeded
+    // as setup/exit criteria instead, which is what they were.
+    const itemMap = await resolveChecklistItemIds(userId, [
+      ...bundle.checklistItems,
+      ...bundle.strategies.flatMap((s) => [
+        ...(s.entryChecklist ?? []).map((label, i) => ({
+          strategy: s.name,
+          block: 'setup' as const,
+          label,
+          sortOrder: i,
+        })),
+        ...(s.exitChecklist ?? []).map((label, i) => ({
+          strategy: s.name,
+          block: 'exit' as const,
+          label,
+          sortOrder: i,
+        })),
+      ]),
+    ])
+
     const externalIdFor = (tr: BundleTrade) => tr.externalId ?? derivedExternalId(tr)
     const existing = await existingExternalIds(userId, v.accountId, bundle.trades.map(externalIdFor))
 
@@ -243,7 +309,15 @@ export const importTradesBundle = importAction(
         )
         prepared.push({
           symbol: tr.symbol,
-          values: tradeValues(userId, v.accountId, tr, externalId, strategyId, notes),
+          values: tradeValues(
+            userId,
+            v.accountId,
+            tr,
+            externalId,
+            strategyId,
+            notes,
+            restoreProgress(tr, tr.strategy ?? null, itemMap.byKey),
+          ),
           tagIds: [
             ...new Set(tr.tags.map((tag) => tagMap.byKey.get(tagKey(tag.group, tag.name))).filter(Boolean)),
           ] as string[],

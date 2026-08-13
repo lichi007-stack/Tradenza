@@ -3,7 +3,9 @@
 import { useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import DataTable, { type DataTableColumn } from '@/components/ui/DataTable'
+import ReviewChips from '@/components/adherence/ReviewChips'
 import { formatCurrency, cn } from '@/lib/utils'
+import type { BlockReview } from '@/lib/adherence'
 import { t } from '@/i18n'
 
 export interface TradeTableRow {
@@ -13,6 +15,10 @@ export interface TradeTableRow {
   status: string
   netPnl: number | null
   entryDatetime: string
+  /** Optional: when present, the table gains a review column. */
+  review?: BlockReview[]
+  /** The review window has closed, so nothing here is outstanding. */
+  reviewLocked?: boolean
 }
 
 function formatDate(value: string): string {
@@ -35,8 +41,13 @@ interface Props {
   rowBasePath?: string
 }
 
+/** Unreviewed blocks first when ascending, which turns the column into a queue. */
+const pendingCount = (r: TradeTableRow): number =>
+  r.reviewLocked ? 0 : (r.review ?? []).filter((s) => s.applicable && !s.reviewed).length
+
 export default function SortableTradesTable({ trades, storageKey, columnsKey, rowBasePath }: Props) {
   const router = useRouter()
+  const showReview = trades.some((r) => r.review && r.review.some((s) => s.applicable))
 
   const columns = useMemo<DataTableColumn<TradeTableRow>[]>(() => {
     const col = (name: string) => t(`${columnsKey}.${name}`)
@@ -74,6 +85,23 @@ export default function SortableTradesTable({ trades, storageKey, columnsKey, ro
         cellClassName: 'whitespace-nowrap text-muted-foreground',
         cell: (r) => formatDate(r.entryDatetime),
       },
+      ...(showReview
+        ? [
+            {
+              key: 'review',
+              header: t('trades.col.review'),
+              sortable: true,
+              sortValue: (r: TradeTableRow) => -pendingCount(r),
+              cell: (r: TradeTableRow) => (
+                <ReviewChips
+                  states={r.review ?? []}
+                  locked={r.reviewLocked}
+                  href={`${rowBasePath ?? '/trades'}/${r.id}?tab=playbook`}
+                />
+              ),
+            } satisfies DataTableColumn<TradeTableRow>,
+          ]
+        : []),
       {
         key: 'netPnl',
         header: col('netPnl'),
@@ -86,7 +114,7 @@ export default function SortableTradesTable({ trades, storageKey, columnsKey, ro
         cell: (r) => (r.netPnl === null ? '—' : formatCurrency(r.netPnl)),
       },
     ]
-  }, [columnsKey])
+  }, [columnsKey, showReview, rowBasePath])
 
   return (
     <DataTable

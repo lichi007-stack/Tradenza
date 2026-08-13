@@ -23,6 +23,8 @@ import { buildWidgetData } from '@/lib/dashboard/compute'
 import { getDemoTrades } from '@/lib/demo/trades'
 import { userHasTrades } from '@/lib/demo/detect'
 import { dayKeyInTz, timeLabelInTz } from '@/lib/date-tz'
+import { criteriaDayOf, loadChecklistItems } from '@/lib/adherence-server'
+import { isCriteriaLocked, reviewStates } from '@/lib/adherence'
 import { classifyOutcome, classifyMeasure, outcomeMeasure, tradeNotional, multiplierFor } from '@/lib/breakeven'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
@@ -216,10 +218,16 @@ export const getDayDetail = authedAction([dateKey], async ({ userId }, date): Pr
           entryQuantity: true,
           riskAmount: true,
           extra: true,
+          strategyId: true,
+          checklistProgress: true,
+          // What the review window is counted from.
+          createdAt: true,
         },
         orderBy: (t, { asc }) => [asc(t.entryDatetime)],
       })
     : getDemoTrades()
+
+  const checklistItems = await loadChecklistItems(userId, timezone)
 
   const dayRows = rows.filter((r) => dayKeyInTz(r.entryDatetime, timezone) === date)
 
@@ -263,6 +271,15 @@ export const getDayDetail = authedAction([dateKey], async ({ userId }, date): Pr
       netPnl: pnl,
       time: label,
       rMultiple: risk > 0 ? pnl / risk : null,
+      review: reviewStates(
+        {
+          strategyId: r.strategyId ?? null,
+          criteriaDay: criteriaDayOf(r, timezone),
+          progress: r.checklistProgress ?? null,
+        },
+        checklistItems,
+      ),
+      reviewLocked: isCriteriaLocked(r.createdAt),
     }
   })
 

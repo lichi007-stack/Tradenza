@@ -10,86 +10,35 @@ import { authedAction, mutationAction } from '@/lib/safe-action'
 import { NotFoundError } from '@/lib/action-errors'
 import { readGlobalSettings } from '@/lib/global-settings'
 import { readGlobalFilters } from '@/lib/global-filters'
+import { dayKeyInTz } from '@/lib/date-tz'
 import { generalConditions } from './filter-sql'
-import { computeBundle, type StatsBundle, type TradeRow } from '@/lib/stats-compute'
-import { multiplierFor, tradeNotional } from '@/lib/breakeven'
+import { computeBundle, type StatsBundle } from '@/lib/stats-compute'
+import { STAT_COLUMNS, toTradeRow } from '@/lib/trade-stat-row'
+import { criteriaDayOf, loadChecklistItems, toAdherenceTrade } from '@/lib/adherence-server'
 import {
-  adherenceOf,
-  computeChecklistAnalytics,
-  type ChecklistAnalytics,
-  type ChecklistTrade,
-} from '@/lib/strategy-checklist'
+  adherenceReport,
+  applicableItems,
+  isCriteriaLocked,
+  blockSummaries,
+  resolveTrade,
+  reviewStates,
+  worstBlock,
+  type AdherenceReport,
+  type BlockReview,
+  type ChecklistBlock,
+  type ResolvedTrade,
+} from '@/lib/adherence'
 import { sanitizeRichTextValue } from '@/lib/rich-text'
 import { cleanupOrphanedImages } from '@/lib/orphan-images'
 import { r2KeyFromUrl, r2KeysFromHtml } from '@/lib/r2-keys'
-
-// Columns needed to build a `TradeRow` for `computeBundle` (the shared, tested
-// P&L/stats engine). Kept in one place so per-strategy stats are computed exactly
-// like the dashboard / stats page.
-const STAT_COLUMNS = {
-  netPnl: true,
-  grossPnl: true,
-  fees: true,
-  direction: true,
-  entryDatetime: true,
-  exitDatetime: true,
-  riskAmount: true,
-  riskRewardRatio: true,
-  notes: true,
-  symbol: true,
-  entryPrice: true,
-  entryQuantity: true,
-  extra: true,
-  checklistProgress: true,
-} as const
-
-type StatTradeRow = {
-  netPnl: string | null
-  grossPnl: string | null
-  fees: string | null
-  direction: 'long' | 'short'
-  entryDatetime: Date
-  exitDatetime: Date | null
-  riskAmount: string | null
-  riskRewardRatio: string | null
-  notes: string | null
-  symbol: string
-  entryPrice: string | null
-  entryQuantity: string | null
-  extra: unknown
-  checklistProgress: { entry: string[]; exit: string[] } | null
-}
-
-function toTradeRow(r: StatTradeRow): TradeRow {
-  return {
-    netPnl: Number(r.netPnl ?? 0),
-    grossPnl: Number(r.grossPnl ?? 0),
-    fees: Number(r.fees ?? 0),
-    direction: r.direction,
-    entryDatetime: r.entryDatetime,
-    exitDatetime: r.exitDatetime ?? null,
-    riskAmount: r.riskAmount != null ? Number(r.riskAmount) : null,
-    riskRewardRatio: r.riskRewardRatio != null ? Number(r.riskRewardRatio) : null,
-    hasNotes: typeof r.notes === 'string' && r.notes.trim().length > 0,
-    notional: tradeNotional(Number(r.entryPrice ?? 0), Number(r.entryQuantity ?? 0), multiplierFor(r.extra, r.symbol)),
-  }
-}
 
 export interface StrategyDTO {
   id: string
   name: string
   description: string | null
-  entryChecklist: string[]
-  exitChecklist: string[]
   imageUrls: string[]
   color: string
   sortOrder: number
-}
-
-// Backward-compat: strategies created before the entry/exit split stored a single
-// flat `checklist`. Surface those legacy items as entry criteria until re-saved.
-function entryOf(r: { entryChecklist: string[] | null; checklist: string[] | null }): string[] {
-  return r.entryChecklist ?? r.checklist ?? []
 }
 
 // Keep only images we produced ourselves (under the R2 public base) — never store
@@ -100,13 +49,13 @@ function safeImageUrls(urls: string[] | undefined): string[] {
   return urls.filter((u) => typeof u === 'string' && u.startsWith(base)).slice(0, 8)
 }
 
+// The playbook's criteria are not part of this form any more — they live in
+// `checklist_items`, and a second text-keyed copy would be a rival source of truth.
 const strategySchema = z.object({
   name: z.string().trim().min(1, t('validation.nameRequired')).max(80),
   // Rich-text HTML; large cap because the editor can embed inline (data-URL)
   // images, exactly like trade notes.
   description: z.string().trim().max(8_000_000).optional().nullable().transform(sanitizeRichTextValue),
-  entryChecklist: z.array(z.string().trim().min(1).max(200)).max(30).optional(),
-  exitChecklist: z.array(z.string().trim().min(1).max(200)).max(30).optional(),
   imageUrls: z.array(z.string().url().max(2048)).max(8).optional(),
   color: z.string().trim().max(20).default('#6366f1'),
 })
@@ -121,20 +70,15 @@ export const getStrategies = authedAction([], async ({ userId }): Promise<Strate
     id: r.id,
     name: r.name,
     description: r.description,
-    entryChecklist: entryOf(r),
-    exitChecklist: r.exitChecklist ?? [],
     imageUrls: r.imageUrls ?? (r.imageUrl ? [r.imageUrl] : []),
     color: r.color,
     sortOrder: r.sortOrder,
   }))
 })
 
-// null-if-empty so an empty list clears the column rather than storing `[]`.
-const nonEmpty = (list: string[] | undefined): string[] | null => (list && list.length > 0 ? list : null)
-
 export const createStrategy = mutationAction(
   [strategySchema],
-  async ({ userId }, { name, description, entryChecklist, exitChecklist, imageUrls, color }) => {
+  async ({ userId }, { name, description, imageUrls, color }) => {
     const maxRow = await db
       .select({ m: sql<number>`coalesce(max(${strategies.sortOrder}), -1)`.mapWith(Number) })
       .from(strategies)
@@ -148,9 +92,6 @@ export const createStrategy = mutationAction(
         userId,
         name,
         description: description || null,
-        checklist: null, // legacy column — new writes use entry/exit only
-        entryChecklist: nonEmpty(entryChecklist),
-        exitChecklist: nonEmpty(exitChecklist),
         imageUrls: images.length > 0 ? images : null,
         color,
         sortOrder: nextOrder,
@@ -163,7 +104,7 @@ export const createStrategy = mutationAction(
 
 export const updateStrategy = mutationAction(
   [uuid, strategySchema],
-  async ({ userId }, id, { name, description, entryChecklist, exitChecklist, imageUrls, color }) => {
+  async ({ userId }, id, { name, description, imageUrls, color }) => {
     const images = safeImageUrls(imageUrls)
 
     const previous = await db.query.strategies.findFirst({
@@ -185,9 +126,6 @@ export const updateStrategy = mutationAction(
       .set({
         name,
         description: description || null,
-        checklist: null, // migrate off the legacy column on any save
-        entryChecklist: nonEmpty(entryChecklist),
-        exitChecklist: nonEmpty(exitChecklist),
         imageUrls: images.length > 0 ? images : null,
         color,
         updatedAt: new Date(),
@@ -273,7 +211,10 @@ export interface StrategyOverviewRow extends StrategyDTO {
   tradeCount: number
   netPnl: number
   winRate: number
-  adherence: number | null
+  /** The weakest of the three blocks, not their mean — labelled as such wherever shown. */
+  weakestBlock: number | null
+  /** Which block that was, so the cell can name it. */
+  weakestBlockKey: ChecklistBlock | null
   daily: { date: string; cumulative: number }[]
 }
 
@@ -285,7 +226,7 @@ export const getStrategyOverview = authedAction([], async ({ userId }): Promise<
   const [settings, gf] = await Promise.all([readGlobalSettings(), readGlobalFilters()])
   const filterConds = generalConditions(gf, { includeStatus: false, breakeven: settings.breakeven })
 
-  const [list, rows] = await Promise.all([
+  const [list, rows, items] = await Promise.all([
     db
       .select()
       .from(strategies)
@@ -293,17 +234,18 @@ export const getStrategyOverview = authedAction([], async ({ userId }): Promise<
       .orderBy(strategies.sortOrder, strategies.name),
     db.query.trades.findMany({
       where: and(eq(trades.userId, userId), eq(trades.status, 'closed'), isNotNull(trades.strategyId), ...filterConds),
-      columns: { ...STAT_COLUMNS, strategyId: true },
+      columns: STAT_COLUMNS,
     }),
+    loadChecklistItems(userId, settings.timezone),
   ])
 
-  // Keep the checklist progress alongside each TradeRow so we can measure both
-  // headline stats and playbook adherence from the same grouped data.
-  const grouped = new Map<string, ChecklistTrade[]>()
+  // Grouped once: the headline stats and the per-block adherence are two readings of the
+  // same trades and must never come from different queries.
+  const grouped = new Map<string, ResolvedTrade[]>()
   for (const r of rows) {
     if (!r.strategyId) continue
     const arr = grouped.get(r.strategyId) ?? []
-    arr.push({ row: toTradeRow(r), progress: r.checklistProgress ?? null })
+    arr.push(resolveTrade(toAdherenceTrade(r, settings.timezone), items))
     grouped.set(r.strategyId, arr)
   }
 
@@ -311,18 +253,24 @@ export const getStrategyOverview = authedAction([], async ({ userId }): Promise<
     const group = grouped.get(s.id) ?? []
     const bundle = group.length
       ? computeBundle(
-          group.map((g) => g.row),
+          group.map((g) => g.trade.row),
           'net',
           settings.breakeven,
         )
       : null
-    const entryChecklist = entryOf(s)
-    const exitChecklist = s.exitChecklist ?? []
+
+    const summaries = blockSummaries(group)
+    const scores = {
+      gate: summaries.gate.adherencePct,
+      setup: summaries.setup.adherencePct,
+      exit: summaries.exit.adherencePct,
+    }
+    const weakest = worstBlock(scores)
 
     const byDay = new Map<string, number>()
-    for (const g of group) {
-      const key = (g.row.exitDatetime ?? g.row.entryDatetime).toISOString().slice(0, 10)
-      byDay.set(key, (byDay.get(key) ?? 0) + g.row.netPnl)
+    for (const { trade } of group) {
+      const key = (trade.row.exitDatetime ?? trade.row.entryDatetime).toISOString().slice(0, 10)
+      byDay.set(key, (byDay.get(key) ?? 0) + trade.row.netPnl)
     }
     let running = 0
     const daily = [...byDay.keys()].sort().map((date) => ({ date, cumulative: (running += byDay.get(date)!) }))
@@ -331,15 +279,17 @@ export const getStrategyOverview = authedAction([], async ({ userId }): Promise<
       id: s.id,
       name: s.name,
       description: s.description,
-      entryChecklist,
-      exitChecklist,
       imageUrls: s.imageUrls ?? (s.imageUrl ? [s.imageUrl] : []),
       color: s.color,
       sortOrder: s.sortOrder,
       tradeCount: bundle?.totalTrades ?? 0,
       netPnl: bundle?.totalPnl ?? 0,
       winRate: bundle?.winPct ?? 0,
-      adherence: adherenceOf(group, entryChecklist, exitChecklist),
+      weakestBlock: weakest,
+      weakestBlockKey:
+        weakest === null
+          ? null
+          : ((Object.keys(scores) as ChecklistBlock[]).find((b) => scores[b] === weakest) ?? null),
       daily,
     }
   })
@@ -350,14 +300,14 @@ export interface StrategyDetail {
     id: string
     name: string
     description: string | null
-    entryChecklist: string[]
-    exitChecklist: string[]
     imageUrls: string[]
     color: string
   }
   stats: StatsBundle
   curve: { i: number; value: number }[]
-  checklist: ChecklistAnalytics
+  adherence: AdherenceReport
+  /** The criteria in force today, so the page can show what it is measuring against. */
+  criteria: { id: string; block: ChecklistBlock; label: string; definition: string | null; universal: boolean }[]
   recentTrades: {
     id: string
     symbol: string
@@ -365,6 +315,9 @@ export interface StrategyDetail {
     status: string
     netPnl: number | null
     entryDatetime: string
+    review: BlockReview[]
+    /** Its review window has closed — nothing there is outstanding. */
+    reviewLocked: boolean
   }[]
 }
 
@@ -374,17 +327,7 @@ export interface StrategyDetail {
 export const getStrategyDetail = authedAction([uuid], async ({ userId }, id): Promise<StrategyDetail | null> => {
   const row = await db.query.strategies.findFirst({
     where: and(eq(strategies.id, id), eq(strategies.userId, userId)),
-    columns: {
-      id: true,
-      name: true,
-      description: true,
-      checklist: true,
-      entryChecklist: true,
-      exitChecklist: true,
-      imageUrl: true,
-      imageUrls: true,
-      color: true,
-    },
+    columns: { id: true, name: true, description: true, imageUrl: true, imageUrls: true, color: true },
   })
   if (!row) return null
   const strategy = {
@@ -392,8 +335,6 @@ export const getStrategyDetail = authedAction([uuid], async ({ userId }, id): Pr
     name: row.name,
     description: row.description,
     color: row.color,
-    entryChecklist: entryOf(row),
-    exitChecklist: row.exitChecklist ?? [],
     imageUrls: row.imageUrls ?? (row.imageUrl ? [row.imageUrl] : []),
   }
 
@@ -402,21 +343,29 @@ export const getStrategyDetail = authedAction([uuid], async ({ userId }, id): Pr
   const [settings, gf] = await Promise.all([readGlobalSettings(), readGlobalFilters()])
   const filterConds = generalConditions(gf, { includeStatus: false, breakeven: settings.breakeven })
 
-  const closed = await db.query.trades.findMany({
-    where: and(eq(trades.userId, userId), eq(trades.strategyId, id), eq(trades.status, 'closed'), ...filterConds),
-    columns: STAT_COLUMNS,
-  })
+  const [closed, items] = await Promise.all([
+    db.query.trades.findMany({
+      where: and(eq(trades.userId, userId), eq(trades.strategyId, id), eq(trades.status, 'closed'), ...filterConds),
+      columns: STAT_COLUMNS,
+    }),
+    loadChecklistItems(userId, settings.timezone),
+  ])
   const stats = computeBundle(closed.map(toTradeRow), 'net', settings.breakeven)
 
-  // Playbook adherence: how following each criterion relates to outcomes, plus a
-  // full-vs-partial compliance split. Uses the same closed trades as the stats.
-  const checklist = computeChecklistAnalytics(
-    closed.map((c) => ({ row: toTradeRow(c), progress: c.checklistProgress ?? null })),
-    strategy.entryChecklist,
-    strategy.exitChecklist,
-    'net',
-    settings.breakeven,
-  )
+  // Over the same closed trades as the stats above. Universal criteria are scored against
+  // this strategy's trades on purpose — "my exit falls apart on this one setup" is exactly
+  // what the model should be able to say.
+  const adherenceTrades = closed.map((c) => resolveTrade(toAdherenceTrade(c, settings.timezone), items))
+  const adherence = adherenceReport(adherenceTrades, 'net', settings.breakeven)
+
+  const today = dayKeyInTz(new Date(), settings.timezone)
+  const criteria = applicableItems(items, { strategyId: id, criteriaDay: today }).map((i) => ({
+    id: i.id,
+    block: i.block,
+    label: i.label,
+    definition: i.definition,
+    universal: i.strategyId === null,
+  }))
 
   // Equity curve: cumulative net P&L over closed trades in chronological order.
   // Starts at a zero baseline (index 0) so the line visually begins from 0 —
@@ -437,7 +386,17 @@ export const getStrategyDetail = authedAction([uuid], async ({ userId }, id): Pr
     where: and(eq(trades.userId, userId), eq(trades.strategyId, id), ...filterConds),
     orderBy: [desc(trades.entryDatetime)],
     limit: 20,
-    columns: { id: true, symbol: true, direction: true, status: true, netPnl: true, entryDatetime: true },
+    columns: {
+      id: true,
+      symbol: true,
+      direction: true,
+      status: true,
+      netPnl: true,
+      entryDatetime: true,
+      strategyId: true,
+      checklistProgress: true,
+      createdAt: true,
+    },
   })
   const recentTrades = recent.map((r) => ({
     id: r.id,
@@ -446,7 +405,16 @@ export const getStrategyDetail = authedAction([uuid], async ({ userId }, id): Pr
     status: r.status,
     netPnl: r.netPnl != null ? Number(r.netPnl) : null,
     entryDatetime: r.entryDatetime.toISOString(),
+    review: reviewStates(
+      {
+        strategyId: r.strategyId,
+        criteriaDay: criteriaDayOf(r, settings.timezone),
+        progress: r.checklistProgress,
+      },
+      items,
+    ),
+    reviewLocked: isCriteriaLocked(r.createdAt),
   }))
 
-  return { strategy, stats, curve, checklist, recentTrades }
+  return { strategy, stats, curve, adherence, criteria, recentTrades }
 })

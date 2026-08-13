@@ -1,7 +1,7 @@
 'use server'
 
 import { db, trades, tags, tradeTags, accounts, strategies } from '@/lib/db'
-import { eq, and, or, desc, asc, gte, lte, ilike, inArray, count, sql } from 'drizzle-orm'
+import { eq, ne, and, or, desc, asc, gte, lte, ilike, inArray, count, sql } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import type { TradeFilters } from '@/types'
 import { calculatePnl } from '@/lib/utils'
@@ -19,6 +19,7 @@ import { NotFoundError, ValidationError } from '@/lib/action-errors'
 import { t } from '@/i18n'
 import { sanitizeRichTextValue } from '@/lib/rich-text'
 import { cleanupOrphanedImages, tradeImageKeys } from '@/lib/orphan-images'
+import { CRITERIA_WINDOW_HOURS } from '@/lib/adherence'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -268,19 +269,59 @@ const tradeFiltersSchema = z
     dateTo: z.string().optional(),
     minPnl: z.number().optional(),
     maxPnl: z.number().optional(),
+    review: z.literal('pending').optional(),
     page: z.number().int().positive().optional(),
     pageSize: z.number().int().positive().max(500).optional(),
     // `riskRewardRatio` is the legacy key for the R column (it used to sort by the
     // planned R:R); it is still accepted from old URLs/cookies and treated as `rMultiple`.
-    sortBy: z.enum(['entryDatetime', 'netPnl', 'symbol', 'rMultiple', 'riskRewardRatio']).optional(),
+    sortBy: z.enum(['entryDatetime', 'netPnl', 'symbol', 'rMultiple', 'riskRewardRatio', 'review']).optional(),
     sortOrder: z.enum(['asc', 'desc']).optional(),
   })
   .default({})
 
+/**
+ * Trades with no adherence review at all — none of the three blocks touched, rather than
+ * not all three: which blocks *could* be reviewed depends on the criteria live on the
+ * trade's day, and reproducing that in SQL would strand trades here forever. Legacy v1
+ * rows count as reviewed; they were assessed under the rules of the day.
+ */
+const NEEDS_REVIEW = sql`(
+  -- Past the review window nothing can be recorded any more, so an untouched old trade
+  -- is not "to review" — it is closed. Leaving it in would make the queue a list of
+  -- work that cannot be done.
+  ${trades.createdAt} > now() - interval '${sql.raw(String(CRITERIA_WINDOW_HOURS))} hours'
+) and (
+  -- Same reason: with no setup named there are no criteria to record. See applicableItems.
+  ${trades.strategyId} is not null
+) and (
+  ${trades.checklistProgress} is null
+  or (
+    ${trades.checklistProgress}->>'v' = '2'
+    and coalesce((${trades.checklistProgress}->'blocks'->'gate'->>'scored')::boolean, false) = false
+    and coalesce((${trades.checklistProgress}->'blocks'->'setup'->>'scored')::boolean, false) = false
+    and coalesce((${trades.checklistProgress}->'blocks'->'exit'->>'scored')::boolean, false) = false
+  )
+)`
+
+/**
+ * How reviewed a trade is, as a sortable 0–3. Same logic as NEEDS_REVIEW; v1 rows count as
+ * 2 (setup and exit existed, gate did not). Ascending puts the most work first.
+ */
+const REVIEWED_BLOCKS = sql`case
+  when ${trades.checklistProgress} is null then 0
+  when ${trades.checklistProgress}->>'v' = '2' then
+    coalesce((${trades.checklistProgress}->'blocks'->'gate'->>'scored')::boolean, false)::int
+    + coalesce((${trades.checklistProgress}->'blocks'->'setup'->>'scored')::boolean, false)::int
+    + coalesce((${trades.checklistProgress}->'blocks'->'exit'->>'scored')::boolean, false)::int
+  else 2
+end`
+
 async function buildTradeConditions(userId: string, filters: TradeFilters) {
-  const { direction, status, assetClass, tagId, strategyId, dateFrom, dateTo, minPnl, maxPnl, search } = filters
+  const { direction, status, assetClass, tagId, strategyId, dateFrom, dateTo, minPnl, maxPnl, search, review } = filters
 
   const conditions = [eq(trades.userId, userId)]
+
+  if (review === 'pending') conditions.push(NEEDS_REVIEW)
 
   if (direction && direction !== 'all') conditions.push(eq(trades.direction, direction))
   if (status && status !== 'all') conditions.push(eq(trades.status, status))
@@ -323,6 +364,56 @@ export const getFilteredTradeIds = authedAction([tradeFiltersSchema], async ({ u
   return rows.map((r) => r.id)
 })
 
+/**
+ * How many trades still have no adherence review. Filtered exactly like the list it links
+ * to, header filters included — a chip promising twelve that opens three is worse than none.
+ */
+export const countTradesToReview = authedAction([], async ({ userId }): Promise<number> => {
+  const [gf, { breakeven }] = await Promise.all([readGlobalFilters(), readGlobalSettings()])
+  const [row] = await db
+    .select({ count: count() })
+    .from(trades)
+    .where(and(eq(trades.userId, userId), NEEDS_REVIEW, ...generalConditions(gf, { includeStatus: true, breakeven })))
+  return row?.count ?? 0
+})
+
+export interface NextReviewTrade {
+  id: string
+  symbol: string
+  /** How many are still waiting after this one, so the panel can say "3 left". */
+  remaining: number
+}
+
+/**
+ * The next trade waiting for a review, newest first, excluding the one being looked at —
+ * so reviewing is a pass rather than a trip back to the list after every trade.
+ */
+export const getNextTradeToReview = authedAction(
+  [z.string().optional()],
+  async ({ userId }, currentId): Promise<NextReviewTrade | null> => {
+    const [gf, { breakeven }] = await Promise.all([readGlobalFilters(), readGlobalSettings()])
+    const where = and(
+      eq(trades.userId, userId),
+      NEEDS_REVIEW,
+      ...(currentId ? [ne(trades.id, currentId)] : []),
+      // Only closed trades can be judged on their exit, like every adherence figure.
+      eq(trades.status, 'closed'),
+      // Same scope as the chip and the list, so "next" stays inside the working set.
+      ...generalConditions(gf, { includeStatus: false, breakeven }),
+    )
+    const [[next], [total]] = await Promise.all([
+      db
+        .select({ id: trades.id, symbol: trades.symbol })
+        .from(trades)
+        .where(where)
+        .orderBy(desc(trades.entryDatetime))
+        .limit(1),
+      db.select({ count: count() }).from(trades).where(where),
+    ])
+    return next ? { id: next.id, symbol: next.symbol, remaining: (total?.count ?? 1) - 1 } : null
+  },
+)
+
 export const getTradeSymbols = authedAction([], async ({ userId }): Promise<string[]> => {
   const rows = await db
     .selectDistinct({ symbol: trades.symbol })
@@ -357,6 +448,7 @@ export const getTrades = authedAction([tradeFiltersSchema], async ({ userId }, f
       let cmp: number
       if (sortBy === 'netPnl') cmp = Number(a.netPnl ?? 0) - Number(b.netPnl ?? 0)
       else if (sortBy === 'symbol') cmp = a.symbol.localeCompare(b.symbol)
+      // Demo trades carry no review progress, so 'review' falls back to the date.
       else cmp = a.entryDatetime.getTime() - b.entryDatetime.getTime()
       return sortOrder === 'asc' ? cmp : -cmp
     })
@@ -381,12 +473,15 @@ export const getTrades = authedAction([tradeFiltersSchema], async ({ userId }, f
         // no initial risk have no R, so they are parked at the bottom in both
         // directions instead of heading the list on the first click.
         sql`(${trades.netPnl}::numeric / nullif(${trades.riskAmount}::numeric, 0)) ${sql.raw(sortOrder === 'asc' ? 'asc' : 'desc')} nulls last`
-      : orderFn(sortBy === 'netPnl' ? trades.netPnl : sortBy === 'symbol' ? trades.symbol : trades.entryDatetime)
+      : sortBy === 'review'
+        ? sql`${REVIEWED_BLOCKS} ${sql.raw(sortOrder === 'asc' ? 'asc' : 'desc')}`
+        : orderFn(sortBy === 'netPnl' ? trades.netPnl : sortBy === 'symbol' ? trades.symbol : trades.entryDatetime)
 
   const [rows, totalResult] = await Promise.all([
     db.query.trades.findMany({
       where: and(...conditions),
-      orderBy: [orderBy],
+      // Newest first within a tie, so the review queue stays chronological.
+      orderBy: [orderBy, desc(trades.entryDatetime)],
       limit: pageSize,
       offset: (page - 1) * pageSize,
       with: {
@@ -427,21 +522,5 @@ export const getTradeById = authedAction([uuid], async ({ userId }, id) => {
   return trade
 })
 
-const checklistProgressSchema = z.object({
-  entry: z.array(z.string().trim().min(1).max(200)).max(30),
-  exit: z.array(z.string().trim().min(1).max(200)).max(30),
-})
-
-export const setTradeChecklistProgress = mutationAction(
-  [uuid, checklistProgressSchema],
-  async ({ userId }, tradeId, progress) => {
-    const empty = progress.entry.length === 0 && progress.exit.length === 0
-    await db
-      .update(trades)
-      .set({ checklistProgress: empty ? null : progress, updatedAt: new Date() })
-      .where(and(eq(trades.id, tradeId), eq(trades.userId, userId)))
-    revalidatePath('/trades')
-    revalidatePath('/strategies')
-    return { success: true }
-  },
-)
+// Checklist progress is written per block by `setTradeBlockProgress` in
+// lib/actions/adherence — one write covering both blocks could not express "not assessed".

@@ -27,7 +27,12 @@ import { z } from 'zod'
  *    the JSON is what lets a thousand-trade journal stay a few megabytes.
  */
 export const TRADE_BUNDLE_FORMAT = 'tradenza.trades'
-export const TRADE_BUNDLE_VERSION = 1
+/**
+ * 2 — adherence. Carries the checklist items and keys progress by criterion label rather
+ * than row id, for the same reason strategies and tags travel by name. Version 1 bundles
+ * still import; their `entry`/`exit` arrays are read as the setup and exit blocks.
+ */
+export const TRADE_BUNDLE_VERSION = 2
 
 /** Upper bound on trades per bundle, mirroring the CSV import's row ceiling. */
 export const MAX_BUNDLE_TRADES = 10000
@@ -83,11 +88,44 @@ export const bundleTagGroupSchema = z.object({
 export const bundleStrategySchema = z.object({
   name,
   description: nullish(z.string().max(20000)),
+  /** Version 1 only — superseded by `checklistItems`. Still read on import. */
   entryChecklist: nullish(z.array(z.string().max(500)).max(200)),
   exitChecklist: nullish(z.array(z.string().max(500)).max(200)),
   imageUrls: nullish(z.array(url).max(50)),
   color: nullish(color),
   sortOrder: nullish(z.number().int()),
+})
+
+const dayKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+
+export const bundleChecklistItemSchema = z.object({
+  /** Owning strategy by name; null = universal. */
+  strategy: nullish(name),
+  block: z.enum(['gate', 'setup', 'exit']),
+  label: z.string().trim().min(1).max(500),
+  definition: nullish(z.string().max(2000)),
+  sortOrder: nullish(z.number().int()),
+  /** First day the criterion governed a trade — what keeps history from re-scoring. */
+  effectiveFrom: nullish(dayKey),
+})
+
+/**
+ * A trade's adherence, keyed by label so it survives the crossing into another journal.
+ * `scored` is what keeps an unassessed block distinguishable from a failed one.
+ */
+const bundleBlockProgressSchema = z.object({
+  scored: z.boolean(),
+  met: z.array(z.string().max(500)).max(200),
+  scoredAt: nullish(timestamp),
+})
+
+const bundleAdherenceSchema = z.object({
+  v: z.literal(2),
+  blocks: z.object({
+    gate: bundleBlockProgressSchema,
+    setup: bundleBlockProgressSchema,
+    exit: bundleBlockProgressSchema,
+  }),
 })
 
 export const bundleScreenshotSchema = z.object({
@@ -125,10 +163,13 @@ export const bundleTradeSchema = z.object({
   riskAmount: nullish(decimal),
 
   checklistProgress: nullish(
-    z.object({
-      entry: z.array(z.string().max(500)).max(200),
-      exit: z.array(z.string().max(500)).max(200),
-    }),
+    z.union([
+      bundleAdherenceSchema,
+      z.object({
+        entry: z.array(z.string().max(500)).max(200),
+        exit: z.array(z.string().max(500)).max(200),
+      }),
+    ]),
   ),
 
   setupName: nullish(z.string().max(200)),
@@ -160,12 +201,16 @@ export const tradeBundleSchema = z.object({
   ),
   tagGroups: z.array(bundleTagGroupSchema).max(500).default([]),
   strategies: z.array(bundleStrategySchema).max(500).default([]),
+  /** Version 2+. Absent on a v1 bundle, whose criteria live on the strategies. */
+  checklistItems: z.array(bundleChecklistItemSchema).max(2000).default([]),
   trades: z.array(bundleTradeSchema).min(1).max(MAX_BUNDLE_TRADES),
 })
 
 export type BundleTag = z.infer<typeof bundleTagSchema>
 export type BundleTagGroup = z.infer<typeof bundleTagGroupSchema>
 export type BundleStrategy = z.infer<typeof bundleStrategySchema>
+export type BundleChecklistItem = z.infer<typeof bundleChecklistItemSchema>
+export type BundleAdherence = z.infer<typeof bundleAdherenceSchema>
 export type BundleScreenshot = z.infer<typeof bundleScreenshotSchema>
 export type BundleTrade = z.infer<typeof bundleTradeSchema>
 export type TradeBundle = z.infer<typeof tradeBundleSchema>

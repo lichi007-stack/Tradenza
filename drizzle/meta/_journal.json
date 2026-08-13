@@ -162,6 +162,13 @@
       "when": 1785939528558,
       "tag": "0022_drop_unused_journal_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1786194310910,
+      "tag": "0023_checklist_items",
+      "breakpoints": true
     }
   ]
 }

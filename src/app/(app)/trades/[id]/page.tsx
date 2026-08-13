@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation'
-import { getTradeById } from '@/lib/actions/trades'
+import { getTradeById, getNextTradeToReview } from '@/lib/actions/trades'
 import { getTagGroups } from '@/lib/actions/tags'
 import { getStrategies } from '@/lib/actions/strategies'
+import { getTradeAdherence } from '@/lib/actions/adherence'
 import { getDailyNote } from '@/lib/actions/progress'
 import { readGlobalSettings } from '@/lib/global-settings'
 import { readSidebarPrefs } from '@/lib/sidebar-prefs'
@@ -33,12 +34,14 @@ export default async function TradeDetailPage({ params }: { params: Promise<{ id
   const { id } = await params
   if (isDemoId(id)) return <DemoTradeDetail />
 
-  const [trade, tagGroups, strategies, settings, sidebarPrefs] = await Promise.all([
+  const [trade, tagGroups, strategies, settings, sidebarPrefs, adherence, nextToReview] = await Promise.all([
     getTradeById(id),
     getTagGroups(),
     getStrategies(),
     readGlobalSettings(),
     readSidebarPrefs(),
+    getTradeAdherence(id),
+    getNextTradeToReview(id),
   ])
   if (!trade) notFound()
 
@@ -54,6 +57,8 @@ export default async function TradeDetailPage({ params }: { params: Promise<{ id
       dayKey={dayKey}
       dailyNote={dailyNote}
       sidebarPrefs={sidebarPrefs}
+      adherence={adherence}
+      nextToReview={nextToReview}
     />
   )
 }

@@ -26,6 +26,7 @@ import legal from './locales/en/legal.json'
 import admin from './locales/en/admin.json'
 import feedback from './locales/en/feedback.json'
 import strategies from './locales/en/strategies.json'
+import adherence from './locales/en/adherence.json'
 
 const en = {
   common,
@@ -54,6 +55,7 @@ const en = {
   admin,
   feedback,
   strategies,
+  adherence,
 } as const
 
 type Messages = typeof en
@@ -73,18 +75,47 @@ function resolve(key: string): unknown {
     )
 }
 
+/**
+ * ICU-style plural forms: `{count, plural, one {# trade} other {# trades}}`. Hand-written
+ * because this is the only piece of ICU the app uses. `#` stands in for the number and
+ * categories come from Intl.PluralRules, so a language with `few` / `many` needs a
+ * dictionary entry, not a code change; an unmatched category falls back to `other`.
+ */
+const PLURAL_RE = /\{(\w+),\s*plural,\s*((?:\s*\w+\s*\{[^{}]*\})+)\}/g
+
+const pluralRules = new Intl.PluralRules(activeLocale)
+
+function applyPlurals(text: string, params: Params): string {
+  return text.replace(PLURAL_RE, (whole, key: string, body: string) => {
+    const raw = params[key]
+    if (raw === undefined) return whole
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return whole
+
+    const forms = new Map<string, string>()
+    for (const [, name, form] of body.matchAll(/(\w+)\s*\{([^{}]*)\}/g)) forms.set(name, form)
+
+    // An exact `=0` / `=1` match wins over the grammatical category.
+    const chosen = forms.get(`=${n}`) ?? forms.get(pluralRules.select(n)) ?? forms.get('other')
+    return chosen === undefined ? whole : chosen.replace(/#/g, String(raw))
+  })
+}
+
 export function t(key: string, params?: Params): string {
   const val = resolve(key)
   if (typeof val !== 'string') return key
   if (!params) return val
-  return val.replace(/\{(\w+)\}/g, (_, k) => (params[k] !== undefined ? String(params[k]) : `{${k}}`))
+  return applyPlurals(val, params).replace(/\{(\w+)\}/g, (_, k) =>
+    params[k] !== undefined ? String(params[k]) : `{${k}}`,
+  )
 }
 
 export function tRich(key: string, params?: Params): ReactNode {
   const val = resolve(key)
   if (typeof val !== 'string') return key
   if (!params) return val
-  const parts = val.split(/(\{\w+\})/g)
+  // Plurals are already resolved, so only simple `{name}` placeholders are left to split.
+  const parts = applyPlurals(val, params).split(/(\{\w+\})/g)
   return parts.map((part, i) => {
     const m = part.match(/^\{(\w+)\}$/)
     if (m && params[m[1]] !== undefined) {

@@ -4,7 +4,18 @@ import { formatCurrency, cn } from '@/lib/utils'
 import { t } from '@/i18n'
 
 export const winRateText = (s: StrategyOverviewRow) => (s.tradeCount > 0 ? `${Math.round(s.winRate)}%` : '—')
-export const adherenceText = (s: StrategyOverviewRow) => (s.adherence !== null ? `${Math.round(s.adherence)}%` : '—')
+
+/**
+ * The weakest block, named — an average would hide exactly what the split exists to reveal.
+ * Says "not evaluated" rather than 0% when nothing has been assessed.
+ */
+export const weakestBlockText = (s: StrategyOverviewRow) =>
+  s.weakestBlock === null || !s.weakestBlockKey
+    ? t('strategies.weakest.none')
+    : t('strategies.weakest.label', {
+        block: t(`adherence.blocks.${s.weakestBlockKey}.letter`) + ':',
+        pct: Math.round(s.weakestBlock),
+      })
 
 export const strategyColumns: DataTableColumn<StrategyOverviewRow>[] = [
   {
@@ -39,11 +50,11 @@ export const strategyColumns: DataTableColumn<StrategyOverviewRow>[] = [
     cell: winRateText,
   },
   {
-    key: 'adherence',
-    header: t('strategies.stats.adherence'),
+    key: 'weakestBlock',
+    header: t('strategies.stats.weakestBlock'),
     sortable: true,
     align: 'right',
     cellClassName: 'tabular-nums text-muted-foreground',
-    cell: adherenceText,
+    cell: weakestBlockText,
   },
 ]

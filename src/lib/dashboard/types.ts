@@ -1,4 +1,5 @@
 import type { Outcome } from '@/lib/breakeven'
+import type { BlockReview } from '@/lib/adherence'
 
 export type WidgetZone = 'top' | 'main'
 
@@ -22,6 +23,7 @@ export type MainWidgetType =
   | 'duration-performance'
   | 'calendar'
   | 'top-symbols'
+  | 'adherence'
 
 export type WidgetType = TopWidgetType | MainWidgetType
 
@@ -187,6 +189,10 @@ export interface DayTrade {
   netPnl: number
   time: string
   rMultiple: number | null
+  /** Per-block review state — the day review is where reviewing naturally happens. */
+  review: BlockReview[]
+  /** Its review window has closed — a record, not outstanding work. */
+  reviewLocked: boolean
 }
 
 export interface DayDetailStats {

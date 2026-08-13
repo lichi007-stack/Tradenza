@@ -21,11 +21,12 @@
     "namePlaceholder": "e.g. Opening range breakout",
     "description": "Definition / rules",
     "descriptionPlaceholder": "Entry criteria, exit rules, what makes this setup valid…",
-    "entryChecklist": "Entry criteria",
-    "exitChecklist": "Exit criteria",
-    "addCriterion": "Add criterion",
-    "criterionPlaceholder": "e.g. Price above VWAP",
-    "removeCriterion": "Remove criterion",
+    "criteria": "Criteria for this setup",
+    "criteriaHint": "Yes/no checks scored on every trade you assign to this setup. Pick which block each belongs to.",
+    "criteriaPlaceholder": "One thing you can answer yes or no to",
+    "criteriaAdd": "Add",
+    "criteriaRemove": "Remove criterion",
+    "criteriaSplit": "Looks like two checks — add them separately so a miss says which one failed.",
     "images": "Reference screenshots",
     "attachImages": "Upload images",
     "uploading": "Uploading…",
@@ -48,6 +49,10 @@
   },
   "toast": {
     "created": "Strategy created",
+    "createdCriteria": "Add a few setup criteria so adherence has something to measure it against.",
+    "createdCriteriaCta": "Add criteria",
+    "createdWithCriteria": "{count, plural, one {# criterion added} other {# criteria added}}",
+    "criteriaFailed": "Strategy saved, but the criteria could not be added",
     "updated": "Strategy updated",
     "deleted": "Strategy deleted"
   },
@@ -62,30 +67,11 @@
     "expectancy": "Expectancy",
     "avgR": "Avg R",
     "profitFactor": "Profit factor",
-    "adherence": "Adherence"
+    "weakestBlock": "Weakest block"
   },
   "detail": {
     "back": "Back to strategies",
-    "entryChecklistTitle": "Entry criteria",
-    "exitChecklistTitle": "Exit criteria",
     "referenceTitle": "Reference",
-    "playbook": {
-      "title": "Playbook performance",
-      "adherence": "Adherence",
-      "full": "All criteria met",
-      "partial": "Some skipped",
-      "trades": "{count} trades",
-      "expectancy": "Expectancy",
-      "winRate": "Win rate",
-      "criterion": "Criterion",
-      "followed": "Followed",
-      "winFollowed": "Win% followed",
-      "winMissed": "Win% skipped",
-      "pnlFollowed": "Avg P&L followed",
-      "pnlMissed": "Avg P&L skipped",
-      "hurtsNote": "Flagged criteria underperformed when followed vs. skipped — worth revisiting. Faded values have too few trades to trust.",
-      "hurtsTooltip": "Following this criterion did worse than skipping it"
-    },
     "galleryPrev": "Previous image",
     "galleryNext": "Next image",
     "galleryClose": "Close",
@@ -98,6 +84,16 @@
       "status": "Status",
       "entry": "Entry",
       "netPnl": "Net P&L"
-    }
+    },
+    "adherenceAllLink": "All setups →"
+  },
+  "tabs": {
+    "setups": "Setups",
+    "adherence": "Adherence",
+    "criteria": "Criteria"
+  },
+  "weakest": {
+    "label": "{block} {pct}%",
+    "none": "Not reviewed"
   }
 }

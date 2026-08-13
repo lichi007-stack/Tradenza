@@ -15,6 +15,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
 import type { SidebarPrefs } from '../trade-sidebar'
+import type { ChecklistProgress } from '../adherence'
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,11 @@ export const ruleTypeEnum = pgEnum('rule_type', ['hard', 'soft'])
 export const ruleCategoryEnum = pgEnum('rule_category', ['trading', 'habit'])
 // Which side of the app an excused day applies to — see dailyCheckins.awayScope.
 export const awayScopeEnum = pgEnum('away_scope', ['both', 'trading', 'habits'])
+// The three blocks a trade's adherence is measured in, never averaged into one figure:
+//  - 'gate':  was I allowed to take this trade at all?
+//  - 'setup': did I read this setup correctly?
+//  - 'exit':  how I managed the position once it was open.
+export const checklistBlockEnum = pgEnum('checklist_block', ['gate', 'setup', 'exit'])
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 // Lightweight registry of the app's users. Auth stays owned by Clerk (the source
@@ -125,10 +131,11 @@ export const trades = pgTable(
     riskRewardRatio: numeric('risk_reward_ratio', { precision: 8, scale: 4 }),
     riskAmount: numeric('risk_amount', { precision: 18, scale: 8 }),
 
-    // Which of the strategy's entry/exit criteria the user actually ticked off for
-    // this trade. Stored by criterion text (robust to reordering); stale entries
-    // left over after the strategy's checklist changes are simply ignored on read.
-    checklistProgress: jsonb('checklist_progress').$type<{ entry: string[]; exit: string[] }>(),
+    // Two shapes, discriminated by `v` and normalised on read (see lib/adherence):
+    //  - v1 (legacy): { entry, exit } keyed by criterion text.
+    //  - v2: per-block progress keyed by `checklist_items.id`, plus a `scored` flag so
+    //    "not evaluated" stays distinguishable from "evaluated and failed".
+    checklistProgress: jsonb('checklist_progress').$type<ChecklistProgress>(),
 
     // Journaling. What a trader writes about a trade lives in `notes` (rich text,
     // images) and in tags; `rating` is the one structured judgement. Free-text
@@ -449,6 +456,40 @@ export const strategies = pgTable(
   }),
 )
 
+// ─── Adherence checklist items ────────────────────────────────────────────────
+// One binary criterion a trade is measured against, in one of three blocks. Replaces the
+// text arrays on `strategies` and adds the two things that make the measurement work: a
+// stable id (progress used to be keyed by text, so rewording detached every trade that had
+// ticked it) and `strategyId = null` for "applies to every setup".
+//
+// Edits are forward-only, like discipline rules: `effectiveFrom` / `archivedAt` bound the
+// days an item governs. Fixing a typo keeps the id; replacing archives it and inserts a new
+// row.
+export const checklistItems = pgTable(
+  'checklist_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: text('user_id').notNull(),
+    // null → applies to every strategy.
+    strategyId: uuid('strategy_id').references(() => strategies.id, { onDelete: 'cascade' }),
+    block: checklistBlockEnum('block').notNull(),
+    label: text('label').notNull(), // what you see next to the checkbox
+    definition: text('definition'), // what "met" precisely means — shown as a tooltip
+    sortOrder: integer('sort_order').notNull().default(0),
+    // Inclusive start, 'yyyy-MM-dd' in the user's timezone — a trade belongs to a day.
+    effectiveFrom: text('effective_from').notNull(),
+    // Soft-delete: stops applying from here on, keeps counting toward the trades it
+    // governed. null = live.
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    userBlockIdx: index('checklist_items_user_block_idx').on(t.userId, t.block),
+    strategyIdx: index('checklist_items_strategy_idx').on(t.strategyId),
+  }),
+)
+
 // ─── Feedback ─────────────────────────────────────────────────────────────────
 // User-submitted bug reports / ideas / wishes. Stored in-app (self-hosted, no
 // external dependency); an optional e-mail notification is sent on submit when
@@ -480,6 +521,11 @@ export const tradesRelations = relations(trades, ({ many, one }) => ({
 
 export const strategiesRelations = relations(strategies, ({ many }) => ({
   trades: many(trades),
+  checklistItems: many(checklistItems),
+}))
+
+export const checklistItemsRelations = relations(checklistItems, ({ one }) => ({
+  strategy: one(strategies, { fields: [checklistItems.strategyId], references: [strategies.id] }),
 }))
 
 export const accountsRelations = relations(accounts, ({ many }) => ({
@@ -535,3 +581,5 @@ export type Feedback = typeof feedback.$inferSelect
 export type NewFeedback = typeof feedback.$inferInsert
 export type Strategy = typeof strategies.$inferSelect
 export type NewStrategy = typeof strategies.$inferInsert
+export type ChecklistItemRow = typeof checklistItems.$inferSelect
+export type NewChecklistItemRow = typeof checklistItems.$inferInsert

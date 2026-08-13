@@ -15,6 +15,7 @@ import {
   dailyCheckins,
   feedback,
   strategies,
+  checklistItems,
   users,
 } from '@/lib/db'
 import { runAtomic } from './atomic'
@@ -43,6 +44,8 @@ export async function purgeUserData(userId: string): Promise<void> {
     x.delete(dashboardTemplates).where(eq(dashboardTemplates.userId, userId)),
     x.delete(dailyCheckins).where(eq(dailyCheckins.userId, userId)),
     x.delete(feedback).where(eq(feedback.userId, userId)),
+    // Before the strategies they reference (the FK would cascade anyway).
+    x.delete(checklistItems).where(eq(checklistItems.userId, userId)),
     x.delete(strategies).where(eq(strategies.userId, userId)),
     x.delete(accounts).where(eq(accounts.userId, userId)),
     x.delete(users).where(eq(users.id, userId)),

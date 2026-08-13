@@ -28,6 +28,7 @@ import NetDailyPnlWidget from './widgets/NetDailyPnlWidget'
 import PerformanceWidget from './widgets/PerformanceWidget'
 import CalendarWidget from './widgets/CalendarWidget'
 import TopSymbolsWidget from './widgets/TopSymbolsWidget'
+import AdherenceWidget from './widgets/AdherenceWidget'
 
 export interface WidgetDef {
   type: WidgetType
@@ -83,6 +84,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetDef> = {
   'duration-performance': def('duration-performance', 'main', Timer, PerformanceWidget, [1, 1, 2]),
   calendar: def('calendar', 'main', CalendarDays, CalendarWidget, [2, 2, 2], 2),
   'top-symbols': def('top-symbols', 'main', Trophy, TopSymbolsWidget, [1, 1, 2]),
+  adherence: def('adherence', 'main', Gauge, AdherenceWidget, [1, 1, 2]),
 }
 
 export const TOP_WIDGETS = Object.values(WIDGET_REGISTRY).filter((w) => w.zone === 'top')

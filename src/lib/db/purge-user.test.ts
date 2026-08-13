@@ -19,6 +19,7 @@ const { EXPECTED_TABLES, deleted, batchMock, r2, captureMock } = vi.hoisted(() =
     'ruleCompletions',
     'dailyCheckins',
     'feedback',
+    'checklistItems',
     'strategies',
     'users',
   ],

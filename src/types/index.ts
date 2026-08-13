@@ -57,9 +57,15 @@ export interface TradeFilters {
   dateTo?: string
   minPnl?: number
   maxPnl?: number
+  /**
+   * `pending` narrows the list to trades with no adherence review. A list filter rather
+   * than a global one: the header filters feed every statistic, and excluding reviewed
+   * trades there would silently reshape P&L.
+   */
+  review?: 'pending'
   page?: number
   pageSize?: number
   /** `riskRewardRatio` is the legacy alias for `rMultiple` (old URLs/cookies). */
-  sortBy?: 'entryDatetime' | 'netPnl' | 'symbol' | 'rMultiple' | 'riskRewardRatio'
+  sortBy?: 'entryDatetime' | 'netPnl' | 'symbol' | 'rMultiple' | 'riskRewardRatio' | 'review'
   sortOrder?: 'asc' | 'desc'
 }

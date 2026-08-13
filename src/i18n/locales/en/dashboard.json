@@ -187,6 +187,10 @@
     "top-symbols": {
       "label": "Top symbols",
       "description": "Best performing symbols"
+    },
+    "adherence": {
+      "label": "Adherence",
+      "description": "How faithfully you followed your own plan, per block"
     }
   }
 }

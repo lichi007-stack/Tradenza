@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Trash2 } from 'lucide-react'
 import { formatDateTz, cn } from '@/lib/utils'
 import { deleteTrade } from '@/lib/actions/trades'
@@ -11,10 +11,11 @@ import { getTradeCandles, type CandlesResult } from '@/lib/actions/candles'
 import type { TagGroupWithValues } from '@/lib/actions/tags'
 import TradeStatsPanel, { type SidebarTab } from './detail/TradeStatsPanel'
 import TradeTagsPanel from './detail/TradeTagsPanel'
-import TradePlaybookPanel from './detail/TradePlaybookPanel'
+import AdherencePanel from './detail/AdherencePanel'
 import StrategyPanel from './detail/StrategyPanel'
 import NotesTabs from './detail/NotesTabs'
 import type { StrategyDTO } from '@/lib/actions/strategies'
+import type { TradeAdherence } from '@/lib/actions/adherence'
 import type { SidebarPrefs } from '@/lib/trade-sidebar'
 import { normalizeExecutions } from './detail/executions'
 import { toast } from 'sonner'
@@ -24,6 +25,7 @@ import { t, tRich } from '@/i18n'
 import { useConfirm } from '@/components/providers/ConfirmProvider'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import type { Trade } from '@/lib/db'
+import type { NextReviewTrade } from '@/lib/actions/trades'
 
 // Client-only: lightweight-charts needs the DOM
 const TradeChart = dynamic(() => import('./detail/TradeChart'), { ssr: false })
@@ -41,6 +43,10 @@ interface Props {
   dayKey: string
   dailyNote: string
   sidebarPrefs?: SidebarPrefs
+  /** Criteria applicable to this trade + what's recorded — see lib/adherence. */
+  adherence: TradeAdherence | null
+  /** Next trade waiting for a review, so reviewing is a pass rather than a lookup. */
+  nextToReview?: NextReviewTrade | null
 }
 
 export default function TradeDetailClient({
@@ -51,10 +57,17 @@ export default function TradeDetailClient({
   dayKey,
   dailyNote,
   sidebarPrefs,
+  adherence,
+  nextToReview,
 }: Props) {
   const router = useRouter()
   const confirm = useConfirm()
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('stats')
+  const searchParams = useSearchParams()
+  // `?tab=playbook` opens the sidebar on the review panel — where the review queue and the
+  // G/S/E chips link to, so neither lands a click away from what was clicked.
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(
+    searchParams.get('tab') === 'playbook' ? 'playbook' : 'stats',
+  )
 
   const executions = useMemo(() => normalizeExecutions(trade), [trade])
   const selectedTagIds = useMemo(() => trade.tradeTags.map(({ tag }) => tag.id), [trade.tradeTags])
@@ -149,11 +162,12 @@ export default function TradeDetailClient({
             timezone={timezone}
             initialPrefs={sidebarPrefs}
             playbookSlot={
-              <TradePlaybookPanel
+              <AdherencePanel
                 tradeId={trade.id}
                 strategies={strategies}
                 current={trade.strategy ?? null}
-                initialProgress={trade.checklistProgress ?? null}
+                initial={adherence}
+                nextToReview={nextToReview ?? null}
               />
             }
             tagsSlot={<TradeTagsPanel tradeId={trade.id} groups={tagGroups} selectedTagIds={selectedTagIds} />}

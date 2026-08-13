@@ -30,6 +30,12 @@
   "execution": {
     "invalidDate": "One of the executions has an invalid date."
   },
+  "checklistItem": {
+    "notFound": "Criterion not found."
+  },
+  "adherence": {
+    "locked": "This trade's review window has closed — its adherence can't be changed."
+  },
   "export": {
     "tooManyTrades": "That is more than {max} trades — more than a single file can hold. Select fewer and export them in parts."
   }

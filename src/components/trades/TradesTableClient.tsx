@@ -7,16 +7,19 @@ import type { TradeFilters } from '@/types'
 import type { TagGroupWithValues } from '@/lib/actions/tags'
 import type { StrategyDTO } from '@/lib/actions/strategies'
 import type { BreakevenConfig } from '@/lib/breakeven'
+import type { ChecklistItem } from '@/lib/adherence'
 
 // `riskRewardRatio` stays valid so bookmarked URLs and the persisted sort from
 // before the R column switched to the realized R-multiple keep working.
-const TRADE_SORT_KEYS = ['entryDatetime', 'netPnl', 'symbol', 'rMultiple', 'riskRewardRatio'] as const
+const TRADE_SORT_KEYS = ['entryDatetime', 'netPnl', 'symbol', 'rMultiple', 'riskRewardRatio', 'review'] as const
 
 interface Props {
   trades: (Trade & {
     tradeTags?: { tag: { id: string; name: string; color: string } }[]
     strategy?: { id: string; name: string; color: string } | null
   })[]
+  /** Every criterion the user has, for resolving each row's review state locally. */
+  checklistItems?: ChecklistItem[]
   total: number
   page: number
   totalPages: number

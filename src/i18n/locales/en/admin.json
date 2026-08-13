@@ -2,7 +2,7 @@
   "sync": {
     "button": "Sync",
     "syncing": "Syncing…",
-    "removed": "Removed {count} deleted user(s)",
+    "removed": "Removed {count, plural, one {# deleted user} other {# deleted users}}",
     "upToDate": "All users up to date",
     "skipped": "Sync skipped — couldn't fully verify with Clerk",
     "error": "Sync failed"

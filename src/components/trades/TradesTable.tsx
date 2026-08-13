@@ -44,6 +44,9 @@ import {
   TableHeaderCell,
   TableRow,
 } from '@/components/ui/Table'
+import ReviewChips from '@/components/adherence/ReviewChips'
+import { criteriaLockAt, isCriteriaLocked, reviewStates, type ChecklistItem } from '@/lib/adherence'
+import { dayKeyInTz } from '@/lib/date-tz'
 import { useSelection } from '@/hooks/useSelection'
 import { UNGROUPED_ID } from '@/lib/tags-constants'
 import type { TradeFilters } from '@/types'
@@ -63,8 +66,11 @@ const PALETTE = [
   '#84cc16',
 ]
 
-/** Column definitions; `sortKey` marks the columns the server can sort by. */
-const COLUMNS: { key: string; labelKey: string; sortKey?: string }[] = [
+/**
+ * Column definitions; `sortKey` marks the columns the server can sort by. The review column
+ * only appears once the user has defined criteria.
+ */
+const columnsFor = (showReview: boolean): { key: string; labelKey: string; sortKey?: string }[] => [
   { key: 'symbol', labelKey: 'trades.col.symbol' },
   { key: 'dir', labelKey: 'trades.col.dir' },
   { key: 'entry', labelKey: 'trades.col.entry' },
@@ -72,6 +78,8 @@ const COLUMNS: { key: string; labelKey: string; sortKey?: string }[] = [
   { key: 'exit', labelKey: 'trades.col.exit' },
   { key: 'date', labelKey: 'trades.col.date', sortKey: 'entryDatetime' },
   { key: 'strategy', labelKey: 'trades.col.strategy' },
+  // Sortable so ascending turns the column into a queue: least reviewed first.
+  ...(showReview ? [{ key: 'review', labelKey: 'trades.col.review', sortKey: 'review' }] : []),
   { key: 'rmultiple', labelKey: 'trades.col.rmultiple', sortKey: 'rMultiple' },
   { key: 'pnl', labelKey: 'trades.col.pnl', sortKey: 'netPnl' },
 ]
@@ -83,6 +91,7 @@ type TradeRow = Trade & {
 
 interface Props {
   trades: TradeRow[]
+  checklistItems?: ChecklistItem[]
   total: number
   page: number
   totalPages: number
@@ -101,6 +110,7 @@ interface Props {
 
 export default function TradesTable({
   trades,
+  checklistItems = [],
   total,
   page,
   totalPages,
@@ -118,6 +128,8 @@ export default function TradesTable({
 }: Props) {
   const router = useRouter()
   const confirm = useConfirm()
+  const showReview = checklistItems.length > 0
+  const COLUMNS = columnsFor(showReview)
   const searchParams = useSearchParams()
 
   const sel = useSelection()
@@ -551,6 +563,23 @@ export default function TradesTable({
                         '—'
                       )}
                     </TableCell>
+                    {showReview && (
+                      <TableCell className="whitespace-nowrap text-xs" onClick={(e) => e.stopPropagation()}>
+                        <ReviewChips
+                          href={`/trades/${trade.id}?tab=playbook`}
+                          locked={isCriteriaLocked(trade.createdAt)}
+                          states={reviewStates(
+                            {
+                              strategyId: trade.strategyId,
+                              // Resolved from when the row was recorded, like the server does.
+                              criteriaDay: dayKeyInTz(criteriaLockAt(trade.createdAt), timezone ?? null),
+                              progress: trade.checklistProgress,
+                            },
+                            checklistItems,
+                          )}
+                        />
+                      </TableCell>
+                    )}
                     <TableCell className="text-xs text-muted-foreground tabular">
                       {formatR(realizedR(trade.netPnl, trade.riskAmount))}
                     </TableCell>

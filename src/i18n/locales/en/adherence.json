@@ -1,0 +1,222 @@
+{
+  "title": "Adherence",
+  "blocks": {
+    "gate": {
+      "name": "Before the trade",
+      "short": "Gate",
+      "letter": "G",
+      "hint": "Were you allowed to take this trade at all — time, news, risk, regime."
+    },
+    "setup": {
+      "name": "The setup itself",
+      "short": "Setup",
+      "letter": "S",
+      "hint": "Did the chart really show this setup? These criteria belong to the strategy."
+    },
+    "exit": {
+      "name": "Managing the trade",
+      "short": "Exit",
+      "letter": "E",
+      "hint": "What you did with the position once it was open."
+    }
+  },
+  "score": "{met} of {total}",
+  "state": {
+    "todo": "Not reviewed yet — counts towards nothing until you confirm it.",
+    "done": "Reviewed. Unticked criteria count as missed."
+  },
+  "action": {
+    "confirm": "Confirm review",
+    "redo": "Review again",
+    "allMet": "All held",
+    "confirmAll": "Everything held — confirm all blocks"
+  },
+  "review": {
+    "open": "Open this trade's review",
+    "chip": {
+      "done": "{block}: reviewed, {met} of {total} held",
+      "todo": "{block}: still to review",
+      "closed": "{block}: not reviewed, window closed",
+      "none": "{block}: no criteria on this trade's date"
+    }
+  },
+  "coverage": "reviewed on {scored} of {total, plural, one {# trade} other {# trades}}",
+  "queue": {
+    "next": "Next trade to review",
+    "remaining": "{count, plural, one {# more after this} other {# more after this}}"
+  },
+  "window": {
+    "open": "Open for another {left} — it follows your current criteria until then.",
+    "hours": "{count, plural, one {# hour} other {# hours}}",
+    "locked": "Review closed. Later changes to your criteria don't reach it."
+  },
+  "pending": {
+    "note": "Added after this review closed — not scored here.",
+    "blockOnly": "All added after this review closed — nothing to score."
+  },
+  "needsStrategy": "Pick the setup you traded and its checklist appears here. Without one there is nothing to measure against.",
+  "noCriteria": "No criteria in this block yet.",
+  "universal": "Every setup",
+  "verdict": {
+    "noData": "Nothing reviewed yet — review a trade and the diagnosis starts here.",
+    "gate": "Fix your entry discipline first. You're taking trades you shouldn't.",
+    "setup": "Discipline is fine — you're misreading the chart. Look at the setup criteria.",
+    "exit": "You pick the trades well and then lose them. Everything after the entry is what's costing you.",
+    "playbook": "All three hold and you're still losing, over enough trades to mean it. Time to change the playbook.",
+    "smallSample": "A losing stretch this short means nothing yet. Change nothing for another {remaining, plural, one {# trade} other {# trades}}.",
+    "thin": "{block} looks low, but on too few trades to be sure. Review {remaining, plural, one {# more} other {# more}} first.",
+    "clean": "All three hold and you're making money. Keep doing exactly this.",
+    "stat": "{block}: {pct}% over {count, plural, one {# trade} other {# trades}} · target {target}%",
+    "playbookStat": "Negative expectancy over {trades, plural, one {# trade} other {# trades}}",
+    "open": "Open adherence"
+  },
+  "sample": {
+    "needMore": "{remaining, plural, one {# more reviewed trade} other {# more reviewed trades}} before these numbers say anything."
+  },
+  "scope": {
+    "label": "Filtered by:",
+    "range": "{from} – {to}",
+    "from": "from {from}",
+    "to": "until {to}",
+    "accounts": "{count, plural, one {# account} other {# accounts}}",
+    "more": "{count, plural, one {+# more filter} other {+# more filters}}"
+  },
+  "noTradesInFilter": {
+    "title": "No closed trades in the current filter",
+    "description": "Your criteria are set up — widen the filter to see them at work."
+  },
+  "noSetupsShown": {
+    "title": "Every setup is hidden",
+    "description": "Tick a setup back on to see its figures."
+  },
+  "table": {
+    "criterion": "Criterion",
+    "followed": "Followed",
+    "winFollowed": "Win % followed",
+    "winSkipped": "Win % skipped",
+    "pnlFollowed": "Avg P&L followed",
+    "pnlSkipped": "Avg P&L skipped",
+    "separatedNote": "Highlighted rows keep their two win rates apart despite the small sample. Worth a look, not a verdict."
+  },
+  "missed": {
+    "title": "Most often skipped",
+    "empty": "Nothing stands out yet — a criterion appears once you've skipped it a few times.",
+    "count": "{missed} of {total}"
+  },
+  "trend": {
+    "title": "Adherence over time",
+    "hint": "Your daily average per block, oldest to newest. Only days you reviewed something appear.",
+    "hintGrouped": "Averaged in {days}-day steps to keep the range readable. Only days you reviewed something appear.",
+    "samples": "{count, plural, one {# trade} other {# trades}}",
+    "empty": "Review a few trades and the trend starts here."
+  },
+  "perStrategy": {
+    "title": "By setup",
+    "trades": "{count, plural, one {# trade} other {# trades}}",
+    "toggle": "Include {name} in the figures above",
+    "showAll": "Show all ({count} hidden)",
+    "empty": "No setups with closed trades yet."
+  },
+  "criteria": {
+    "subtitle": "The yes/no checks each trade is measured against. Changes apply from today on.",
+    "add": "Add criterion",
+    "seed": "Start from a template",
+    "universalTitle": "Every setup",
+    "universalLead": "Written once, applied to all your setups.",
+    "perStrategyTitle": "Per setup",
+    "perStrategyLead": "Checks only this setup is measured against, on top of the universal ones.",
+    "universalOnly": "universal only",
+    "emptyBlock": "No criteria yet.",
+    "form": {
+      "newTitle": "New criterion",
+      "editTitle": "Edit criterion",
+      "label": "Criterion",
+      "labelPlaceholder": "One thing you can answer yes or no to",
+      "labelHint": "Keep it to a single check — if two things can fail, make it two criteria.",
+      "definition": "What counts as met",
+      "definitionPlaceholder": "Optional — the detail you'd otherwise argue with yourself about",
+      "context": "Adding to:",
+      "scopeUniversal": "Every setup",
+      "mode": "Is this the same criterion?",
+      "modeFix": "Yes — just better wording",
+      "modeFixHint": "Past trades keep counting towards it.",
+      "modeReplace": "No — it's a different check",
+      "modeReplaceHint": "The old one retires today and a new one starts. Past trades keep the old wording.",
+      "save": "Save",
+      "cancel": "Cancel",
+      "saving": "Saving…"
+    },
+    "delete": {
+      "title": "Retire this criterion?",
+      "body": "{name} stops applying from today. Past trades keep it, so their adherence doesn't change.",
+      "confirm": "Retire"
+    },
+    "since": "Applies from {date}"
+  },
+  "template": {
+    "gate": {
+      "window": {
+        "label": "Entry fell inside my trading window",
+        "definition": "The hours you decided in advance to trade."
+      },
+      "news": {
+        "definition": "No high-impact release within a few minutes either side of the entry.",
+        "label": "No high-impact news around the entry"
+      },
+      "regime": {
+        "label": "Market regime allows this setup today",
+        "definition": "You named the regime before entering, and this setup is one you allow yourself in it."
+      },
+      "location": {
+        "label": "Entry sat at a level I can name",
+        "definition": "A level marked in advance, not a price you noticed while watching."
+      },
+      "target": {
+        "label": "Target was at least the minimum R from the stop",
+        "definition": "Measured against the planned stop, before entering."
+      },
+      "size": {
+        "label": "Position size matched the plan",
+        "definition": "Risk per trade inside the range you set for yourself."
+      },
+      "thesis": {
+        "label": "Thesis written down in one sentence",
+        "definition": "Location, context, trigger — written before the entry."
+      }
+    },
+    "exit": {
+      "stopStructure": {
+        "label": "Stop sat on structure from the start",
+        "definition": "Placed where the idea is wrong, not at a round number or a fixed distance."
+      },
+      "stopHeld": {
+        "label": "Stop never moved against the position",
+        "definition": "Moving to breakeven or trailing is fine. Giving the trade more room is not."
+      },
+      "targetHeld": {
+        "label": "Target never moved further away",
+        "definition": "Pushing the target out mid-trade is the same mistake as widening the stop."
+      },
+      "noAdding": {
+        "label": "Nothing added to a losing position",
+        "definition": "Planned scale-ins are fine; adding because it went against you is not."
+      },
+      "plannedClose": {
+        "label": "Closed for a reason I had planned",
+        "definition": "Stop, target, or the thesis being dead. Not boredom, not a feeling, not the clock."
+      }
+    }
+  },
+  "toast": {
+    "saved": "Saved",
+    "created": "Criterion added",
+    "deleted": "Criterion retired",
+    "seeded": "Template added — edit anything that doesn't fit",
+    "saveError": "Could not save"
+  },
+  "empty": {
+    "title": "No criteria yet",
+    "description": "Adherence checks each trade against a short list of yes/no criteria, in three groups: before the trade, the setup itself, and how you managed it. Write a few — or start from the template — and every trade you review becomes a data point.",
+    "cta": "Set up criteria"
+  }
+}
