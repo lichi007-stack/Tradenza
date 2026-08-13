@@ -12,6 +12,77 @@ matching `ghcr.io/honzaprikryl/tradenza` image. See
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-13
+
+Adherence, rebuilt. The old checklist produced one number you couldn't act on
+and reset its own sample every time you reworded a criterion. It is replaced by
+three separate measurements, criteria that keep their identity, and statistics
+that don't claim more than the sample supports.
+
+**Upgrading.** No action and no new environment variable — the migration applies
+itself on container start and only adds tables. Your existing checklists are
+seeded as criteria, dated from the day you upgrade: trades recorded before then
+are past their review window, so they stay outside adherence rather than sitting
+in it as trades nobody ever reviewed. Adherence starts from an empty sample and
+fills as you review, and the old checklist progress is kept and still readable.
+
+### Added
+
+- **Adherence in three blocks.** Every trade is scored against yes/no criteria
+  in three groups — **gate** (were you allowed to take this trade), **setup**
+  (did the chart really show it) and **exit** (how you managed it). They are
+  never averaged: one figure can't tell you which of the three is costing you.
+  A verdict names the weakest block in a sentence, and says _small sample,
+  change nothing_ when that is the honest answer.
+- **"Not reviewed" is a real state.** A block counts towards nothing until you
+  confirm it, and unticked criteria are drawn blank rather than as failures.
+  Every figure shows its coverage ("reviewed on 34 of 41 trades").
+- **A criteria manager**, as a new tab on Strategies next to a new Adherence
+  tab. Universal criteria are written once for every setup; a setup can add its
+  own in any block, straight from the strategy form. A template fills the two
+  universal blocks so it doesn't open on a blank page.
+- **A 24-hour review window, counted from when a trade is recorded.** Log
+  yesterday's trades — or import a backtest run — and they are measured against
+  the criteria you have now. After 24 hours the trade locks: later edits never
+  reach it and no review can be added, which the server enforces. Locked trades
+  leave the review queue instead of piling up as work nobody can do.
+- **A review queue.** G/S/E chips on the trades table, the strategy trade list
+  and the day review, a "_N_ trades to review" filter above the trades list, and
+  a dashboard widget that links to it.
+- **Adherence in the exports** — columns in the CSV, full support in the JSON
+  backup bundle (format version 2), where criteria travel by label so they
+  survive the crossing into another journal.
+
+### Changed
+
+- **Criteria have stable ids.** Progress used to be keyed by the criterion's
+  _text_, so rewording one detached every trade that had ticked it. Criteria now
+  live in their own table with `effectiveFrom` / `archivedAt` day bounds, and
+  editing one asks the question the app can't infer: same criterion, better
+  wording (history continues), or a different check (the old one retires today).
+  Retiring keeps the trades it already governed.
+- **The strategies list shows the weakest block, not an average** — and "not
+  reviewed" rather than 0% when nothing has been assessed.
+- **Per-criterion statistics wait for a sample.** Outcome splits appear at 20
+  reviewed trades in a block, each side of a followed-vs-skipped comparison
+  needs 10, and the UI says _followed vs. skipped_, never _this criterion hurts_.
+- **The playbook's criteria left the strategy form** — they are edited in the
+  Criteria tab, where they have ids and a history.
+- **A fifth getting-started step** for defining criteria.
+
+### Migration
+
+- `0023_checklist_items` adds `checklist_items` (and a `conditional_rules` table
+  that `0024` drops again) and seeds them from the text arrays they replace,
+  dated from the **migration day**. Existing trades are already past their review
+  window, so back-dating would attach a checklist they can never be filled in
+  against and leave them in every coverage denominator forever. Adherence starts
+  clean instead. The migration is additive — the deprecated
+  `strategies.entry_checklist` / `exit_checklist` / `checklist` columns stay, so
+  rolling back means switching the reader, not restoring data.
+- **Progress from the old checklist is kept and read as-is**, so there is no
+  backfill step to run.
+
 ## [0.6.1] - 2026-08-05
 
 A production fix and a small calendar addition. The dashboard could refuse to
@@ -500,7 +571,8 @@ dashboard, statistics, strategies & playbooks, discipline tracking, tags,
 prop-firm trading accounts, candle charts, PWA — running on Next.js 15,
 Drizzle ORM, PostgreSQL (Neon) and Clerk.
 
-[unreleased]: https://github.com/HonzaPrikryl/tradenza/compare/v0.6.1...HEAD
+[unreleased]: https://github.com/HonzaPrikryl/tradenza/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/HonzaPrikryl/tradenza/releases/tag/v0.7.0
 [0.6.1]: https://github.com/HonzaPrikryl/tradenza/releases/tag/v0.6.1
 [0.6.0]: https://github.com/HonzaPrikryl/tradenza/releases/tag/v0.6.0
 [0.5.0]: https://github.com/HonzaPrikryl/tradenza/releases/tag/v0.5.0
