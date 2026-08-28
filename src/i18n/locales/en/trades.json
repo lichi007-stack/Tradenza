@@ -171,6 +171,19 @@
         "strategy": "Strategy"
       }
     },
+    "summary": {
+      "direction": "Direction",
+      "long": "Long",
+      "short": "Short",
+      "positionSize": "Position size",
+      "avgEntry": "Avg entry",
+      "avgExit": "Avg exit",
+      "fees": "Fees",
+      "status": "Status",
+      "open": "Open",
+      "closed": "Closed",
+      "realizedPnl": "Realized P&L"
+    },
     "exec": {
       "title": "Executions",
       "time": "Time",
