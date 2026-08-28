@@ -6,13 +6,15 @@ import { toast } from 'sonner'
 import { getActionErrorMessage } from '@/lib/action-error-message'
 import { handleRateLimit } from '@/components/ui/rate-limit-toast'
 import { Plus, Trash2, Loader2 } from 'lucide-react'
-import { cn, formatCurrency } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { t } from '@/i18n'
 import { saveManualTrade } from '@/lib/actions/wizard'
 import { track } from '@/lib/analytics'
 import { assetMultiplier, editorDefaultMultiplier } from '@/lib/futures'
 import { getBroker, GENERIC_BROKER, type AssetType } from '@/lib/brokers'
 import DateTimeField from '@/components/ui/DateTimeField'
+import TradeSummaryStats from '@/components/trades/detail/TradeSummaryStats'
+import { summarizeExecutions } from '@/components/trades/detail/executions'
 import {
   Table,
   TableBody,
@@ -132,34 +134,22 @@ export default function ManualEntry({
 
   const summary = useMemo(() => {
     if (validExecs.length === 0) return null
-    const sorted = [...validExecs].sort((a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime())
-    const entrySide = sorted[0].side
-    const direction: 'long' | 'short' = entrySide === 'buy' ? 'long' : 'short'
-    const entries = sorted.filter((e) => e.side === entrySide)
-    const exits = sorted.filter((e) => e.side !== entrySide)
-    const qty = (rows: Execution[]) => rows.reduce((s, e) => s + num(e.qty), 0)
-    const avg = (rows: Execution[]) => {
-      const q = qty(rows)
-      return q === 0 ? 0 : rows.reduce((s, e) => s + num(e.price) * num(e.qty), 0) / q
-    }
-    const entryQty = qty(entries)
-    const exitQty = qty(exits)
-    const avgEntry = avg(entries)
-    const avgExit = exits.length > 0 ? avg(exits) : null
-    const fees = sorted.reduce((s, e) => s + num(e.comm) + num(e.fee), 0)
-    const matched = Math.min(entryQty, exitQty)
     // Mirror the server's fallback exactly. The preview used to drop to ×1 when
     // the field was cleared while the save fell back to the instrument's real
     // multiplier, so the number shown was not the number stored.
-    const rawMult = num(sorted[0].multiplier)
+    const rawMult = num(validExecs[0].multiplier)
     const mult = rawMult > 0 ? rawMult : assetMultiplier(assetClass, symbol.trim().toUpperCase())
-    let netPnl: number | null = null
-    if (avgExit !== null && matched > 0) {
-      const gross = (direction === 'long' ? avgExit - avgEntry : avgEntry - avgExit) * matched * mult
-      netPnl = gross - fees
-    }
-    const open = exitQty < entryQty || exits.length === 0
-    return { direction, entryQty, exitQty, avgEntry, avgExit, fees, netPnl, open }
+    return summarizeExecutions(
+      validExecs.map((e) => ({
+        time: Math.floor(new Date(e.dateTime).getTime() / 1000),
+        side: e.side,
+        quantity: num(e.qty),
+        price: num(e.price),
+        commission: num(e.comm),
+        fee: num(e.fee),
+      })),
+      mult,
+    )
   }, [validExecs, assetClass, symbol])
 
   const save = async (addNext: boolean) => {
@@ -361,47 +351,8 @@ export default function ManualEntry({
             </Table>
           </TableContainer>
 
-          {/* Live summary */}
-          {summary && (
-            <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm">
-              <span>
-                <span className="text-muted-foreground">{t('addTrades.manual.summary.direction')}: </span>
-                <span
-                  className={cn('font-medium uppercase', summary.direction === 'long' ? 'text-profit' : 'text-loss')}
-                >
-                  {summary.direction}
-                </span>
-              </span>
-              <span>
-                <span className="text-muted-foreground">{t('addTrades.manual.summary.avgEntry')}: </span>
-                <span className="font-medium tabular">{summary.avgEntry.toLocaleString()}</span>
-              </span>
-              {summary.avgExit !== null && (
-                <span>
-                  <span className="text-muted-foreground">{t('addTrades.manual.summary.avgExit')}: </span>
-                  <span className="font-medium tabular">{summary.avgExit.toLocaleString()}</span>
-                </span>
-              )}
-              <span>
-                <span className="text-muted-foreground">{t('addTrades.manual.summary.fees')}: </span>
-                <span className="font-medium tabular">{summary.fees.toLocaleString()}</span>
-              </span>
-              <span>
-                <span className="text-muted-foreground">{t('addTrades.manual.summary.status')}: </span>
-                <span className="font-medium">
-                  {summary.open ? t('addTrades.manual.summary.open') : t('addTrades.manual.summary.closed')}
-                </span>
-              </span>
-              {summary.netPnl !== null && (
-                <span className="ml-auto">
-                  <span className="text-muted-foreground">{t('addTrades.manual.summary.netPnl')}: </span>
-                  <span className={cn('font-semibold tabular', summary.netPnl >= 0 ? 'text-profit' : 'text-loss')}>
-                    {formatCurrency(summary.netPnl)}
-                  </span>
-                </span>
-              )}
-            </div>
-          )}
+          {/* Live "trade management" summary — position size + realized P&L, updated on every row change */}
+          <TradeSummaryStats summary={summary} className="mt-5" />
         </>
       )}
 
