@@ -1,4 +1,6 @@
 import type { Trade } from '@/lib/db'
+import { calculatePnl } from '@/lib/utils'
+import { roundMoney } from '@/lib/trade-pnl'
 
 export interface NormalizedExecution {
   /** Unix seconds. */
@@ -123,4 +125,80 @@ export function storedRiskPlan(trade: Trade): RiskPlan | undefined {
     profitTargets: legs(rp.profitTargets),
     stopLosses: legs(rp.stopLosses),
   }
+}
+
+export interface SummaryExecution {
+  time: number
+  side: 'buy' | 'sell'
+  quantity: number
+  price: number
+  commission: number
+  fee: number
+}
+
+export interface TradeSummary {
+  direction: 'long' | 'short'
+  /** Total quantity filled on the opening side. */
+  entryQty: number
+  /** Total quantity filled on the closing side. */
+  exitQty: number
+  /** Signed quantity still open (0 = flat, matches {@link positionState}). */
+  openQty: number
+  avgEntry: number
+  avgExit: number | null
+  /** Sum of commissions + fees across every execution. */
+  fees: number
+  /** min(entryQty, exitQty) — the quantity a realized P&L can be computed on. */
+  matchedQty: number
+  /** Realized gross P&L on the matched quantity, with the multiplier applied. Null until something has closed. */
+  grossPnl: number | null
+  /** Realized gross P&L minus fees. Null until something has closed. */
+  netPnl: number | null
+  status: 'open' | 'closed'
+}
+
+/**
+ * One-shot summary of a (possibly still-being-edited) execution list: position
+ * size, average entry/exit, fees and realized P&L. Mirrors exactly what the
+ * server derives when persisting executions (see `updateTradeExecutions` and
+ * `saveManualTrade`), so a live preview while adding/editing never disagrees
+ * with what gets saved. Shared by the add-trade manual entry screen and the
+ * trade detail executions editor so the two never drift apart.
+ */
+export function summarizeExecutions(execs: readonly SummaryExecution[], multiplier?: number): TradeSummary | null {
+  const usable = execs.filter((e) => Number.isFinite(e.time) && e.quantity > 0 && e.price > 0)
+  if (usable.length === 0) return null
+
+  const sorted = [...usable].sort((a, b) => a.time - b.time)
+  const entrySide = sorted[0].side
+  const direction: 'long' | 'short' = entrySide === 'buy' ? 'long' : 'short'
+  const entries = sorted.filter((e) => e.side === entrySide)
+  const exits = sorted.filter((e) => e.side !== entrySide)
+
+  const sumQty = (rows: typeof sorted) => rows.reduce((s, e) => s + e.quantity, 0)
+  const avgPrice = (rows: typeof sorted) => {
+    const q = sumQty(rows)
+    return q === 0 ? 0 : rows.reduce((s, e) => s + e.price * e.quantity, 0) / q
+  }
+
+  const entryQty = sumQty(entries)
+  const exitQty = sumQty(exits)
+  const avgEntry = avgPrice(entries)
+  const avgExit = exits.length > 0 ? avgPrice(exits) : null
+  const fees = sorted.reduce((s, e) => s + e.commission + e.fee, 0)
+  const matchedQty = Math.min(entryQty, exitQty)
+  const mult = multiplier && multiplier > 0 ? multiplier : 1
+
+  let grossPnl: number | null = null
+  let netPnl: number | null = null
+  if (avgExit !== null && matchedQty > 0) {
+    const pnl = calculatePnl(direction, avgEntry, avgExit, matchedQty, 0)
+    grossPnl = roundMoney(pnl.grossPnl * mult)
+    netPnl = roundMoney(grossPnl - fees)
+  }
+
+  const openQty = positionState(sorted).openQty
+  const status: 'open' | 'closed' = exitQty >= entryQty && exits.length > 0 ? 'closed' : 'open'
+
+  return { direction, entryQty, exitQty, openQty, avgEntry, avgExit, fees, matchedQty, grossPnl, netPnl, status }
 }

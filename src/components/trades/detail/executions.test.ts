@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeExecutions, positionState, storedMultiplier, storedRiskPlan } from './executions'
+import { normalizeExecutions, positionState, storedMultiplier, storedRiskPlan, summarizeExecutions } from './executions'
 import type { Trade } from '@/lib/db'
 
 // Helper: build a Trade-shaped object. Numeric DB columns arrive as strings
@@ -135,5 +135,78 @@ describe('positionState', () => {
 
   it('is flat for an empty list', () => {
     expect(positionState([]).openQty).toBe(0)
+  })
+})
+
+describe('summarizeExecutions', () => {
+  const ex = (
+    time: number,
+    side: 'buy' | 'sell',
+    quantity: number,
+    price: number,
+    commission = 0,
+    fee = 0,
+  ) => ({ time, side, quantity, price, commission, fee })
+
+  it('returns null when there is nothing usable yet', () => {
+    expect(summarizeExecutions([])).toBeNull()
+    expect(summarizeExecutions([ex(NaN, 'buy', 1, 100)])).toBeNull()
+    expect(summarizeExecutions([ex(100, 'buy', 0, 100)])).toBeNull()
+  })
+
+  it('reports an open position with no realized P&L yet, entered in two lots', () => {
+    // Scaled into a long across two buys — no exit yet.
+    const s = summarizeExecutions([ex(100, 'buy', 2, 5000), ex(200, 'buy', 3, 5010)])!
+    expect(s.direction).toBe('long')
+    expect(s.entryQty).toBe(5)
+    expect(s.exitQty).toBe(0)
+    expect(s.openQty).toBe(5)
+    expect(s.avgEntry).toBeCloseTo((2 * 5000 + 3 * 5010) / 5)
+    expect(s.avgExit).toBeNull()
+    expect(s.status).toBe('open')
+    expect(s.grossPnl).toBeNull()
+    expect(s.netPnl).toBeNull()
+  })
+
+  it('computes realized P&L on the matched quantity for a partial exit, position still open', () => {
+    // Long 5 @ 5000, scaled out 2 @ 5010 — 3 still open, 2 realized.
+    const s = summarizeExecutions([ex(100, 'buy', 5, 5000), ex(200, 'sell', 2, 5010, 1, 0.5)])!
+    expect(s.entryQty).toBe(5)
+    expect(s.exitQty).toBe(2)
+    expect(s.openQty).toBe(3)
+    expect(s.matchedQty).toBe(2)
+    expect(s.status).toBe('open')
+    expect(s.avgExit).toBe(5010)
+    expect(s.fees).toBeCloseTo(1.5)
+    // (5010 - 5000) * 2 = 20 gross, minus 1.5 fees
+    expect(s.grossPnl).toBeCloseTo(20)
+    expect(s.netPnl).toBeCloseTo(18.5)
+  })
+
+  it('applies the contract multiplier to realized P&L', () => {
+    const s = summarizeExecutions([ex(100, 'buy', 1, 5000), ex(200, 'sell', 1, 5010)], 50)!
+    expect(s.grossPnl).toBeCloseTo((5010 - 5000) * 1 * 50)
+  })
+
+  it('marks the trade closed once the exit quantity catches up, for a short entered and exited in parts', () => {
+    const s = summarizeExecutions([
+      ex(100, 'sell', 2, 5000),
+      ex(150, 'sell', 1, 4995),
+      ex(200, 'buy', 3, 4980),
+    ])!
+    expect(s.direction).toBe('short')
+    expect(s.entryQty).toBe(3)
+    expect(s.exitQty).toBe(3)
+    expect(s.openQty).toBe(0)
+    expect(s.status).toBe('closed')
+    expect(s.avgEntry).toBeCloseTo((2 * 5000 + 1 * 4995) / 3)
+    expect(s.netPnl).not.toBeNull()
+  })
+
+  it('ignores half-filled draft rows so a draft-in-progress does not distort the live preview', () => {
+    const s = summarizeExecutions([ex(100, 'buy', 2, 5000), ex(NaN, 'sell', 1, 5010)])!
+    expect(s.entryQty).toBe(2)
+    expect(s.exitQty).toBe(0)
+    expect(s.status).toBe('open')
   })
 })

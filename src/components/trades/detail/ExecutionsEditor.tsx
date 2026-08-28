@@ -6,14 +6,15 @@ import { toast } from 'sonner'
 import { getActionErrorMessage } from '@/lib/action-error-message'
 import { handleRateLimit } from '@/components/ui/rate-limit-toast'
 import { Pencil, Check, X, Trash2, Plus } from 'lucide-react'
-import { cn, formatCurrency, formatDateTime } from '@/lib/utils'
+import { cn, formatDateTime } from '@/lib/utils'
 import { t, tRich } from '@/i18n'
 import { useConfirm } from '@/components/providers/ConfirmProvider'
 import { useSelection } from '@/hooks/useSelection'
 import { updateTradeExecutions } from '@/lib/actions/trades'
 import { editorDefaultMultiplier } from '@/lib/futures'
 import DateTimeField from '@/components/ui/DateTimeField'
-import { positionState, storedMultiplier, type NormalizedExecution } from './executions'
+import { positionState, storedMultiplier, summarizeExecutions, type NormalizedExecution } from './executions'
+import TradeSummaryStats from './TradeSummaryStats'
 import type { Trade } from '@/lib/db'
 
 const num = (s: string) => {
@@ -71,11 +72,31 @@ export default function ExecutionsEditor({ trade, executions }: { trade: Trade; 
   const { entrySide, openQty } = useMemo(() => positionOf(rows), [rows])
   const isOpen = openQty > 0
 
-  const projectedOpenQty = useMemo(() => {
-    if (!draft) return openQty
-    const next = isNew ? [...rows, draft] : rows.map((r) => (r.id === draft.id ? draft : r))
-    return positionOf(next).openQty
-  }, [draft, isNew, rows, openQty])
+  // Rows as they'll look if the in-progress add/edit is saved — used both for
+  // the "will close / will remain open" hint below the form and for the live
+  // trade summary, so neither ever lags behind what's being typed.
+  const projectedRows = useMemo(() => {
+    if (!draft) return rows
+    return isNew ? [...rows, draft] : rows.map((r) => (r.id === draft.id ? draft : r))
+  }, [draft, isNew, rows])
+
+  const projectedOpenQty = useMemo(() => positionOf(projectedRows).openQty, [projectedRows])
+
+  const summary = useMemo(
+    () =>
+      summarizeExecutions(
+        projectedRows.map((r) => ({
+          time: Math.floor(new Date(r.datetime).getTime() / 1000),
+          side: r.side,
+          quantity: num(r.qty),
+          price: num(r.price),
+          commission: num(r.comm),
+          fee: num(r.fee),
+        })),
+        num(multiplier),
+      ),
+    [projectedRows, multiplier],
+  )
 
   const startEdit = (r: Row) => {
     setIsNew(false)
@@ -180,8 +201,6 @@ export default function ExecutionsEditor({ trade, executions }: { trade: Trade; 
     if (!ok) return
     if (await persist(rows.filter((r) => !sel.has(r.id)))) sel.clear()
   }
-
-  const grossPnl = trade.grossPnl !== null ? Number(trade.grossPnl) : null
 
   const editorForm = (onDelete?: () => void) => {
     if (!draft) return null
@@ -319,25 +338,8 @@ export default function ExecutionsEditor({ trade, executions }: { trade: Trade; 
         )}
       </div>
 
-      <div className="mb-3 space-y-1.5 rounded-md bg-muted/40 px-3 py-2">
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">{t('trades.detail.exec.position')}</span>
-          <span className={cn('text-xs font-medium', isOpen ? 'text-primary' : 'text-muted-foreground')}>
-            {isOpen ? t('trades.detail.exec.openQty', { qty: openQty }) : t('trades.detail.exec.flat')}
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">{t('trades.detail.grossPnl')}</span>
-          <span
-            className={cn(
-              'text-sm font-semibold tabular',
-              grossPnl === null ? 'text-muted-foreground' : grossPnl >= 0 ? 'text-profit' : 'text-loss',
-            )}
-          >
-            {grossPnl !== null ? formatCurrency(grossPnl) : '—'}
-          </span>
-        </div>
-      </div>
+      {/* Live "trade management" summary — position size + realized P&L, recomputed on every add/edit */}
+      <TradeSummaryStats summary={summary} className="mb-3" />
 
       {sel.size > 0 && (
         <button
