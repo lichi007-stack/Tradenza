@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { formatCurrency, formatDateTimeTz, cn } from '@/lib/utils'
 import { realizedR, formatR } from '@/lib/r-multiple'
@@ -52,6 +52,8 @@ import { UNGROUPED_ID } from '@/lib/tags-constants'
 import type { TradeFilters } from '@/types'
 import type { Trade } from '@/lib/db'
 import { classifyOutcome, tradeNotional, multiplierFor, type BreakevenConfig } from '@/lib/breakeven'
+import { normalizeExecutions } from '@/components/trades/detail/executions'
+import { getCurrentPrices } from '@/lib/actions/quotes'
 
 const PALETTE = [
   '#6366f1',
@@ -72,6 +74,7 @@ const PALETTE = [
  */
 const columnsFor = (showReview: boolean): { key: string; labelKey: string; sortKey?: string }[] => [
   { key: 'symbol', labelKey: 'trades.col.symbol' },
+  { key: 'currentPrice', labelKey: 'trades.col.currentPrice' },
   { key: 'dir', labelKey: 'trades.col.dir' },
   { key: 'entry', labelKey: 'trades.col.entry' },
   { key: 'qty', labelKey: 'trades.col.qty' },
@@ -141,6 +144,36 @@ export default function TradesTable({
   const [categoryId, setCategoryId] = useState('')
   const [tagId, setTagId] = useState('')
   const [accountId, setAccountId] = useState('')
+
+  // Live "current price" column: best-effort, keyed by "assetClass:symbol" so
+  // a row can look its own price up without re-deriving anything. Refetched
+  // every 30s so the column stays roughly live while the page is open; a miss
+  // (unsupported asset class, or the lookup failing) just leaves that key out,
+  // which the cell renders as "—" rather than blocking on it.
+  const [prices, setPrices] = useState<Record<string, number | null>>({})
+  useEffect(() => {
+    const symbolsKey = trades.map((tr) => `${tr.assetClass}:${tr.symbol}`).join(',')
+    if (!symbolsKey) return
+    let cancelled = false
+    const items = Array.from(
+      new Map(trades.map((tr) => [`${tr.assetClass}:${tr.symbol}`, { assetClass: tr.assetClass, symbol: tr.symbol }])).values(),
+    )
+    const load = async () => {
+      try {
+        const res = await getCurrentPrices(items)
+        if (!cancelled) setPrices(res)
+      } catch {
+        /* best-effort — leave whatever prices we already have */
+      }
+    }
+    load()
+    const interval = setInterval(load, 30_000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-runs when the row set changes, not on every array identity change
+  }, [trades.map((tr) => `${tr.assetClass}:${tr.symbol}`).join(',')])
 
   const tradeIds = trades.map((tr) => tr.id)
   const toggle = (id: string) => sel.toggle(id)
@@ -514,6 +547,23 @@ export default function TradesTable({
                   ),
                 )
                 const isSel = sel.has(trade.id)
+
+                // Break the trade's fills into the opening side (entry) and the
+                // closing side (exit) so a scaled-in/scaled-out trade shows every
+                // fill, not just the single averaged number — with a total
+                // qty / avg price summary line once there's more than one.
+                const execs = normalizeExecutions(trade)
+                const entrySide = execs[0]?.side ?? (trade.direction === 'long' ? 'buy' : 'sell')
+                const entryFills = execs.filter((e) => e.side === entrySide)
+                const exitFills = execs.filter((e) => e.side !== entrySide)
+                const sumQty = (fills: typeof execs) => fills.reduce((s, e) => s + e.quantity, 0)
+                const avgPrice = (fills: typeof execs) => {
+                  const q = sumQty(fills)
+                  return q === 0 ? 0 : fills.reduce((s, e) => s + e.price * e.quantity, 0) / q
+                }
+                const priceKey = `${trade.assetClass}:${trade.symbol}`
+                const currentPrice = prices[priceKey]
+
                 return (
                   <TableRow
                     key={trade.id}
@@ -528,6 +578,15 @@ export default function TradesTable({
                     <TableCell>
                       <span className="font-mono font-medium">{trade.symbol}</span>
                     </TableCell>
+                    <TableCell className="tabular text-xs">
+                      {currentPrice === undefined ? (
+                        <span className="text-muted-foreground">…</span>
+                      ) : currentPrice === null ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        currentPrice.toFixed(2)
+                      )}
+                    </TableCell>
                     <TableCell>
                       <span
                         className={cn(
@@ -538,13 +597,39 @@ export default function TradesTable({
                         {trade.direction}
                       </span>
                     </TableCell>
-                    <TableCell className="tabular text-xs">{Number(trade.entryPrice).toFixed(4)}</TableCell>
-                    <TableCell className="tabular text-xs">{Number(trade.entryQuantity).toFixed(2)}</TableCell>
-                    <TableCell className="tabular text-xs">
-                      {trade.exitPrice ? (
-                        Number(trade.exitPrice).toFixed(4)
+                    <TableCell className="text-xs">
+                      {entryFills.length <= 1 ? (
+                        <span className="tabular">{Number(trade.entryPrice).toFixed(4)}</span>
                       ) : (
+                        <div className="flex flex-col gap-0.5">
+                          {entryFills.map((e, i) => (
+                            <span key={i} className="tabular text-muted-foreground whitespace-nowrap">
+                              {e.quantity} @ {e.price.toFixed(4)}
+                            </span>
+                          ))}
+                          <span className="tabular font-medium text-foreground mt-0.5 whitespace-nowrap border-t border-border/60 pt-0.5">
+                            {sumQty(entryFills)} @ {avgPrice(entryFills).toFixed(4)}
+                          </span>
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="tabular text-xs">{Number(trade.entryQuantity).toFixed(2)}</TableCell>
+                    <TableCell className="text-xs">
+                      {exitFills.length === 0 ? (
                         <span className="text-muted-foreground">—</span>
+                      ) : exitFills.length === 1 ? (
+                        <span className="tabular">{Number(trade.exitPrice).toFixed(4)}</span>
+                      ) : (
+                        <div className="flex flex-col gap-0.5">
+                          {exitFills.map((e, i) => (
+                            <span key={i} className="tabular text-muted-foreground whitespace-nowrap">
+                              {e.quantity} @ {e.price.toFixed(4)}
+                            </span>
+                          ))}
+                          <span className="tabular font-medium text-foreground mt-0.5 whitespace-nowrap border-t border-border/60 pt-0.5">
+                            {sumQty(exitFills)} @ {avgPrice(exitFills).toFixed(4)}
+                          </span>
+                        </div>
                       )}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">

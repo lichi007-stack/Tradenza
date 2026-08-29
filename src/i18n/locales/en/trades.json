@@ -9,6 +9,7 @@
   },
   "col": {
     "symbol": "Symbol",
+    "currentPrice": "Current price",
     "dir": "Dir.",
     "entry": "Entry",
     "qty": "Qty",
