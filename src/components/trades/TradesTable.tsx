@@ -84,6 +84,7 @@ const columnsFor = (showReview: boolean): { key: string; labelKey: string; sortK
   // Sortable so ascending turns the column into a queue: least reviewed first.
   ...(showReview ? [{ key: 'review', labelKey: 'trades.col.review', sortKey: 'review' }] : []),
   { key: 'rmultiple', labelKey: 'trades.col.rmultiple', sortKey: 'rMultiple' },
+  { key: 'fees', labelKey: 'trades.col.fees' },
   { key: 'pnl', labelKey: 'trades.col.pnl', sortKey: 'netPnl' },
 ]
 
@@ -667,6 +668,9 @@ export default function TradesTable({
                     )}
                     <TableCell className="text-xs text-muted-foreground tabular">
                       {formatR(realizedR(trade.netPnl, trade.riskAmount))}
+                    </TableCell>
+                    <TableCell className="tabular text-xs text-muted-foreground">
+                      {formatCurrency(Number(trade.fees ?? 0), currency)}
                     </TableCell>
                     <TableCell>
                       {trade.netPnl !== null ? (

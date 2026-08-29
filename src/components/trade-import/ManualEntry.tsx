@@ -11,6 +11,7 @@ import { t } from '@/i18n'
 import { saveManualTrade } from '@/lib/actions/wizard'
 import { track } from '@/lib/analytics'
 import { assetMultiplier, editorDefaultMultiplier } from '@/lib/futures'
+import { calcStockCommission } from '@/lib/commission'
 import { getBroker, GENERIC_BROKER, type AssetType } from '@/lib/brokers'
 import DateTimeField from '@/components/ui/DateTimeField'
 import TradeSummaryStats from '@/components/trades/detail/TradeSummaryStats'
@@ -58,6 +59,8 @@ interface Execution {
   price: string
   comm: string
   fee: string
+  /** False once the trader edits the commission field directly — stops the qty-driven auto-calc from overwriting it. */
+  commAuto: boolean
 }
 
 const emptyExec = (side: 'buy' | 'sell' = 'buy', multiplier = ''): Execution => ({
@@ -69,6 +72,7 @@ const emptyExec = (side: 'buy' | 'sell' = 'buy', multiplier = ''): Execution => 
   price: '',
   comm: '',
   fee: '',
+  commAuto: true,
 })
 
 const cellInput = 'w-full bg-transparent text-sm focus:outline-none placeholder:text-muted-foreground/50'
@@ -103,14 +107,38 @@ export default function ManualEntry({
 
   const hasSymbol = symbol.trim().length > 0
 
-  const update = (id: string, patch: Partial<Execution>) =>
-    setExecs((rows) => rows.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+  // Auto-calculated commission (see lib/commission) only makes sense for
+  // stocks — futures/forex/crypto/options/cfd keep manual entry untouched.
+  const autoCommEnabled = (ac: AssetClass) => ac === 'stocks'
 
-  // Switching market resets each row's multiplier to that market's default.
+  const update = (id: string, patch: Partial<Execution>) =>
+    setExecs((rows) =>
+      rows.map((r) => {
+        if (r.id !== id) return r
+        const next = { ...r, ...patch }
+        if ('qty' in patch && next.commAuto && autoCommEnabled(assetClass)) {
+          const q = num(next.qty)
+          next.comm = q > 0 ? String(calcStockCommission(q)) : ''
+        }
+        // A direct edit to the commission field itself is a manual override —
+        // stop recalculating it from qty from here on.
+        if ('comm' in patch) next.commAuto = false
+        return next
+      }),
+    )
+
+  // Switching market resets each row's multiplier to that market's default,
+  // and (for rows still on auto) recalculates commission for the new market.
   const selectAssetClass = (ac: AssetClass) => {
     setAssetClass(ac)
     const mult = rowMultiplier(ac, symbol)
-    setExecs((rows) => rows.map((r) => ({ ...r, multiplier: mult })))
+    setExecs((rows) =>
+      rows.map((r) => ({
+        ...r,
+        multiplier: mult,
+        comm: r.commAuto && autoCommEnabled(ac) && num(r.qty) > 0 ? String(calcStockCommission(num(r.qty))) : r.comm,
+      })),
+    )
   }
 
   const handleSymbolChange = (raw: string) => {
@@ -125,7 +153,10 @@ export default function ManualEntry({
       const side = rows.length > 0 && rows[0].side === 'buy' ? 'sell' : 'buy'
       const last = rows[rows.length - 1]
       const row = emptyExec(side, rowMultiplier(assetClass, symbol))
-      if (last) row.qty = last.qty
+      if (last) {
+        row.qty = last.qty
+        if (autoCommEnabled(assetClass) && num(row.qty) > 0) row.comm = String(calcStockCommission(num(row.qty)))
+      }
       return [...rows, row]
     })
 

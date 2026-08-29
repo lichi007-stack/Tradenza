@@ -18,7 +18,7 @@
     --popover: 220 14% 13%;
     --popover-foreground: 220 10% 92%;
 
-    --primary: 158 64% 52%; /* #34d399 — emerald zelená pro profit */
+    --primary: 172 66% 50%; /* #2dd4bf — turquoise brand/UI accent (separate from --profit below) */
     --primary-foreground: 220 16% 7%;
 
     --secondary: 220 12% 16%;
@@ -35,7 +35,7 @@
 
     --border: 220 12% 18%;
     --input: 220 12% 16%;
-    --ring: 158 64% 52%;
+    --ring: 172 66% 50%;
 
     --radius: 0.5rem;
 
@@ -58,7 +58,7 @@
     --card-foreground: 220 16% 10%;
     --popover: 0 0% 100%;
     --popover-foreground: 220 16% 10%;
-    --primary: 158 64% 38%;
+    --primary: 173 80% 32%; /* #0d9488 — turquoise brand/UI accent, darker for light backgrounds */
     --primary-foreground: 0 0% 98%;
     --secondary: 220 8% 94%;
     --secondary-foreground: 220 12% 30%;
@@ -70,7 +70,7 @@
     --destructive-foreground: 0 0% 98%;
     --border: 220 8% 88%;
     --input: 220 8% 88%;
-    --ring: 158 64% 38%;
+    --ring: 173 80% 32%;
     --profit: 158 64% 38%;
     --loss: 0 72% 51%;
     --breakeven: 217 84% 48%;

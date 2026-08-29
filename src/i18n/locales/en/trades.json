@@ -18,6 +18,7 @@
     "strategy": "Strategy",
     "review": "Review",
     "rmultiple": "R-Multiple",
+    "fees": "Fees",
     "pnl": "P&L"
   },
   "review": {

@@ -12,6 +12,7 @@ import { useConfirm } from '@/components/providers/ConfirmProvider'
 import { useSelection } from '@/hooks/useSelection'
 import { updateTradeExecutions } from '@/lib/actions/trades'
 import { editorDefaultMultiplier } from '@/lib/futures'
+import { calcStockCommission } from '@/lib/commission'
 import DateTimeField from '@/components/ui/DateTimeField'
 import { positionState, storedMultiplier, summarizeExecutions, type NormalizedExecution } from './executions'
 import TradeSummaryStats from './TradeSummaryStats'
@@ -34,7 +35,13 @@ interface Row {
   price: string
   comm: string
   fee: string
+  /** False once the commission field is edited directly (or for an already-saved fill) — stops the qty-driven auto-calc from overwriting it. */
+  commAuto?: boolean
 }
+
+// Auto-calculated commission (see lib/commission) only makes sense for
+// stocks — futures/forex/crypto/options/cfd keep manual entry unchanged.
+const autoCommEnabled = (assetClass: string) => assetClass === 'stocks'
 
 let _idc = 0
 const mkId = () => `e${_idc++}`
@@ -59,6 +66,9 @@ export default function ExecutionsEditor({ trade, executions }: { trade: Trade; 
       price: String(e.price),
       comm: String(e.commission),
       fee: String(e.fee),
+      // Already-saved fills keep whatever commission they were saved with —
+      // only a brand-new row auto-calculates from qty.
+      commAuto: false,
     })),
   )
   const initMult = storedMultiplier(trade) ?? editorDefaultMultiplier(trade.assetClass, trade.symbol)
@@ -108,21 +118,36 @@ export default function ExecutionsEditor({ trade, executions }: { trade: Trade; 
     setDraft(null)
     setIsNew(false)
   }
-  const patch = (p: Partial<Row>) => setDraft((d) => (d ? { ...d, ...p } : d))
+  const patch = (p: Partial<Row>) =>
+    setDraft((d) => {
+      if (!d) return d
+      const next = { ...d, ...p }
+      if ('qty' in p && next.commAuto && autoCommEnabled(trade.assetClass)) {
+        const q = num(next.qty)
+        next.comm = q > 0 ? String(calcStockCommission(q)) : ''
+      }
+      // A direct edit to the commission field itself is a manual override —
+      // stop recalculating it from qty from here on.
+      if ('comm' in p) next.commAuto = false
+      return next
+    })
 
   const addRow = () => {
     const closingSide: 'buy' | 'sell' = entrySide === 'buy' ? 'sell' : 'buy'
     setIsNew(true)
     const id = mkId()
     setEditingId(id)
+    const qty = isOpen ? String(openQty) : ''
+    const autoComm = autoCommEnabled(trade.assetClass)
     setDraft({
       id,
       datetime: toLocalInput(new Date()),
       side: isOpen ? closingSide : entrySide,
-      qty: isOpen ? String(openQty) : '',
+      qty,
       price: '',
-      comm: '',
+      comm: autoComm && num(qty) > 0 ? String(calcStockCommission(num(qty))) : '',
       fee: '',
+      commAuto: true,
     })
   }
 

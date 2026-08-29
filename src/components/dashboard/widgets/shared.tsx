@@ -24,7 +24,7 @@ const DARK_FALLBACK: ChartColors = {
   loss: 'hsl(0 72% 60%)',
   grid: 'hsl(220 12% 18%)',
   axis: 'hsl(220 8% 55%)',
-  primary: 'hsl(158 64% 52%)',
+  primary: 'hsl(172 66% 50%)',
   card: 'hsl(220 14% 11%)',
   popover: 'hsl(220 14% 13%)',
   border: 'hsl(220 12% 18%)',
