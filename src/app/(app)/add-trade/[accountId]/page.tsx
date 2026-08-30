@@ -27,8 +27,12 @@ export default async function AddTradeDetailPage({
 
   const broker = getBroker(account.broker ?? undefined) ?? GENERIC_BROKER
 
-  const initialMode: AddTradeMode =
-    mode === 'manual' || mode === 'upload' ? mode : account.importedCount > 0 ? 'upload' : 'manual'
+  // Manual entry is the default entry point for everyone now — only an
+  // explicit "?mode=upload" (from the CSV-import flow) switches to the
+  // upload step. Previously this defaulted to "upload" for any account that
+  // already had imported trades, which is what sent a one-account trader back
+  // to the file-upload screen every time.
+  const initialMode: AddTradeMode = mode === 'upload' ? 'upload' : 'manual'
 
   return (
     <div className="p-6 animate-in">

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { getActionErrorMessage } from '@/lib/action-error-message'
@@ -9,10 +9,11 @@ import { Plus, Trash2, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { t } from '@/i18n'
 import { saveManualTrade } from '@/lib/actions/wizard'
+import { getCurrentPrices } from '@/lib/actions/quotes'
 import { track } from '@/lib/analytics'
 import { assetMultiplier, editorDefaultMultiplier } from '@/lib/futures'
 import { calcStockCommission } from '@/lib/commission'
-import { getBroker, GENERIC_BROKER, type AssetType } from '@/lib/brokers'
+import type { AssetType } from '@/lib/brokers'
 import DateTimeField from '@/components/ui/DateTimeField'
 import TradeSummaryStats from '@/components/trades/detail/TradeSummaryStats'
 import { summarizeExecutions } from '@/components/trades/detail/executions'
@@ -29,16 +30,11 @@ import {
 
 type AssetClass = AssetType | 'other'
 
-// Which asset classes the picker offers for a broker. A recognised broker is
-// constrained to the types it actually supports (plus "other" as an escape
-// hatch), mirroring the file-upload flow; unknown / generic brokers fall back to
-// GENERIC_BROKER so both paths offer the same list in the same order. The first
-// entry is the default selection.
-const assetChoicesFor = (brokerId: string): readonly AssetClass[] => {
-  const broker = getBroker(brokerId)
-  const assets = broker && broker.assets.length > 0 ? broker.assets : GENERIC_BROKER.assets
-  return [...assets, 'other']
-}
+// This journal is only ever used for stocks, so the asset-class picker is
+// locked to a single choice rather than showing futures/forex/crypto/options/
+// cfd tabs nobody here picks. (Kept as a function, not a constant, so a future
+// broker-driven need to widen this back out only touches this one spot.)
+const assetChoicesFor = (_brokerId: string): readonly AssetClass[] => ['stocks']
 
 // The quantity column means different things per market — contracts, shares, or
 // units — so its header adapts to the selected asset class.
@@ -61,11 +57,22 @@ interface Execution {
   fee: string
   /** False once the trader edits the commission field directly — stops the qty-driven auto-calc from overwriting it. */
   commAuto: boolean
+  /** False once the trader edits the price field directly — stops the live-quote auto-fill from overwriting it. */
+  priceAuto: boolean
+}
+
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/** "Right now", in the shape DateTimeField/the store format expects — a sane default so a
+ * one-account trader entering today's trade never has to touch the date picker. */
+const nowLocalInput = (): string => {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 const emptyExec = (side: 'buy' | 'sell' = 'buy', multiplier = ''): Execution => ({
   id: Math.random().toString(36).slice(2),
-  dateTime: '',
+  dateTime: nowLocalInput(),
   multiplier,
   qty: '',
   side,
@@ -73,6 +80,7 @@ const emptyExec = (side: 'buy' | 'sell' = 'buy', multiplier = ''): Execution => 
   comm: '',
   fee: '',
   commAuto: true,
+  priceAuto: true,
 })
 
 const cellInput = 'w-full bg-transparent text-sm focus:outline-none placeholder:text-muted-foreground/50'
@@ -104,12 +112,45 @@ export default function ManualEntry({
   const [symbol, setSymbol] = useState('')
   const [execs, setExecs] = useState<Execution[]>([emptyExec()])
   const [saving, setSaving] = useState(false)
+  const [livePrice, setLivePrice] = useState<number | null>(null)
 
   const hasSymbol = symbol.trim().length > 0
 
   // Auto-calculated commission (see lib/commission) only makes sense for
   // stocks — futures/forex/crypto/options/cfd keep manual entry untouched.
   const autoCommEnabled = (ac: AssetClass) => ac === 'stocks'
+
+  // Fetch the current market price for whatever symbol is typed in, the same
+  // free-source lookup the trades table uses (see lib/actions/quotes) — so the
+  // Price field can default to "what it's trading at right now" instead of a
+  // blank the trader has to fill in from another tab.
+  useEffect(() => {
+    const trimmed = symbol.trim().toUpperCase()
+    if (!trimmed) {
+      setLivePrice(null)
+      return
+    }
+    let cancelled = false
+    getCurrentPrices([{ assetClass, symbol: trimmed }])
+      .then((prices) => {
+        if (cancelled) return
+        const price = prices?.[`${assetClass}:${trimmed}`]
+        setLivePrice(typeof price === 'number' ? price : null)
+      })
+      .catch(() => {
+        if (!cancelled) setLivePrice(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [assetClass, symbol])
+
+  // Once a live price comes back, drop it into any row still on auto-fill
+  // (i.e. the trader hasn't typed a price of their own yet).
+  useEffect(() => {
+    if (livePrice === null) return
+    setExecs((rows) => rows.map((r) => (r.priceAuto && !r.price ? { ...r, price: String(livePrice) } : r)))
+  }, [livePrice])
 
   const update = (id: string, patch: Partial<Execution>) =>
     setExecs((rows) =>
@@ -123,6 +164,9 @@ export default function ManualEntry({
         // A direct edit to the commission field itself is a manual override —
         // stop recalculating it from qty from here on.
         if ('comm' in patch) next.commAuto = false
+        // Same for price: once the trader types their own, stop overwriting it
+        // with the live quote.
+        if ('price' in patch) next.priceAuto = false
         return next
       }),
     )
@@ -153,6 +197,7 @@ export default function ManualEntry({
       const side = rows.length > 0 && rows[0].side === 'buy' ? 'sell' : 'buy'
       const last = rows[rows.length - 1]
       const row = emptyExec(side, rowMultiplier(assetClass, symbol))
+      if (livePrice !== null) row.price = String(livePrice)
       if (last) {
         row.qty = last.qty
         if (autoCommEnabled(assetClass) && num(row.qty) > 0) row.comm = String(calcStockCommission(num(row.qty)))
@@ -228,24 +273,35 @@ export default function ManualEntry({
 
       <div className="mt-6">
         <p className="mb-2 text-xs font-medium text-primary">{t('addTrades.manual.type')}</p>
-        <div className="inline-flex flex-wrap gap-1 rounded-lg bg-muted/50 p-1">
-          {assetChoices.map((ac) => {
-            const active = ac === assetClass
-            return (
-              <button
-                key={ac}
-                type="button"
-                onClick={() => selectAssetClass(ac)}
-                className={cn(
-                  'rounded-md px-3 py-1.5 text-sm transition-colors',
-                  active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {t(`addTrades.assets.${ac}`)}
-              </button>
-            )
-          })}
-        </div>
+        {assetChoices.length === 1 ? (
+          // Only one market is ever offered here, so there's nothing to pick —
+          // show it as a plain, non-interactive label instead of a one-button
+          // tab group that looks clickable but does nothing.
+          <div className="inline-flex rounded-lg bg-muted/50 p-1">
+            <span className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground">
+              {t(`addTrades.assets.${assetChoices[0]}`)}
+            </span>
+          </div>
+        ) : (
+          <div className="inline-flex flex-wrap gap-1 rounded-lg bg-muted/50 p-1">
+            {assetChoices.map((ac) => {
+              const active = ac === assetClass
+              return (
+                <button
+                  key={ac}
+                  type="button"
+                  onClick={() => selectAssetClass(ac)}
+                  className={cn(
+                    'rounded-md px-3 py-1.5 text-sm transition-colors',
+                    active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {t(`addTrades.assets.${ac}`)}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {/* Symbol */}
@@ -275,6 +331,7 @@ export default function ManualEntry({
                     {t(`addTrades.manual.col.${qtyHeaderKey(assetClass)}`)}
                   </TableHeaderCell>
                   <TableHeaderCell className="px-3 py-2.5">{t('addTrades.manual.col.side')}</TableHeaderCell>
+                  <TableHeaderCell className="px-3 py-2.5">{t('addTrades.manual.col.positionSize')}</TableHeaderCell>
                   <TableHeaderCell className="px-3 py-2.5">{t('addTrades.manual.col.price')}</TableHeaderCell>
                   <TableHeaderCell className="px-3 py-2.5">{t('addTrades.manual.col.comm')}</TableHeaderCell>
                   <TableHeaderCell className="px-3 py-2.5">{t('addTrades.manual.col.fee')}</TableHeaderCell>
@@ -326,6 +383,19 @@ export default function ManualEntry({
                         ))}
                       </div>
                     </TableCell>
+                    <TableCell className="px-3 py-2 w-24 tabular text-sm">
+                      {(() => {
+                        const q = num(r.qty)
+                        if (q <= 0) return <span className="text-muted-foreground">—</span>
+                        const signed = r.side === 'buy' ? q : -q
+                        return (
+                          <span className={signed >= 0 ? 'text-profit' : 'text-loss'}>
+                            {signed >= 0 ? '+' : ''}
+                            {signed}
+                          </span>
+                        )
+                      })()}
+                    </TableCell>
                     <TableCell className="px-3 py-2 w-28">
                       <input
                         inputMode="decimal"
@@ -367,7 +437,7 @@ export default function ManualEntry({
                   </TableRow>
                 ))}
                 <TableRow className="border-b-0 border-t border-border">
-                  <TableCell colSpan={8} className="px-4 py-3">
+                  <TableCell colSpan={9} className="px-4 py-3">
                     <button
                       type="button"
                       onClick={addRow}

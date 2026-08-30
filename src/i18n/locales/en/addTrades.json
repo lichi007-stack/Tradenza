@@ -161,6 +161,7 @@
       "units": "Units",
       "qty": "Quantity",
       "side": "Side",
+      "positionSize": "Position size",
       "price": "Price, $",
       "comm": "Comm, $",
       "fee": "Fee, $"
