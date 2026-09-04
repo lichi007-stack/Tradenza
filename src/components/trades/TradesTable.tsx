@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { formatCurrency, formatDateTimeTz, cn } from '@/lib/utils'
+import { formatCurrency, formatDateTimeTz, cn, calculatePnl } from '@/lib/utils'
 import { realizedR, formatR } from '@/lib/r-multiple'
 import { deleteTrade, deleteTrades, addTagToTrades, setTradesAccount, getFilteredTradeIds } from '@/lib/actions/trades'
 import { setTradesStrategy, type StrategyDTO } from '@/lib/actions/strategies'
@@ -21,6 +21,7 @@ import {
   Archive,
   FileSpreadsheet,
   X,
+  PlusCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getActionErrorMessage } from '@/lib/action-error-message'
@@ -54,6 +55,7 @@ import type { Trade } from '@/lib/db'
 import { classifyOutcome, tradeNotional, multiplierFor, type BreakevenConfig } from '@/lib/breakeven'
 import { normalizeExecutions } from '@/components/trades/detail/executions'
 import { getCurrentPrices } from '@/lib/actions/quotes'
+import QuickAddExecutionDialog from '@/components/trades/QuickAddExecutionDialog'
 
 const PALETTE = [
   '#6366f1',
@@ -75,6 +77,8 @@ const PALETTE = [
 const columnsFor = (showReview: boolean): { key: string; labelKey: string; sortKey?: string }[] => [
   { key: 'symbol', labelKey: 'trades.col.symbol' },
   { key: 'currentPrice', labelKey: 'trades.col.currentPrice' },
+  { key: 'unrealizedPnl', labelKey: 'trades.col.unrealizedPnl' },
+  { key: 'status', labelKey: 'trades.col.status' },
   { key: 'dir', labelKey: 'trades.col.dir' },
   { key: 'entry', labelKey: 'trades.col.entry' },
   { key: 'qty', labelKey: 'trades.col.qty' },
@@ -145,6 +149,10 @@ export default function TradesTable({
   const [categoryId, setCategoryId] = useState('')
   const [tagId, setTagId] = useState('')
   const [accountId, setAccountId] = useState('')
+  // Row shortcut for "add an execution to this trade" — skips the trip through
+  // the trade detail page's Executions tab for the single most common action
+  // (closing out the rest of an open position).
+  const [quickAddTrade, setQuickAddTrade] = useState<TradeRow | null>(null)
 
   // Live "current price" column: best-effort, keyed by "assetClass:symbol" so
   // a row can look its own price up without re-deriving anything. Refetched
@@ -533,6 +541,7 @@ export default function TradesTable({
                   ),
                 )}
                 <TableHeaderCell className="w-px px-3" />
+                <TableHeaderCell className="w-px px-3" />
               </TableHeadRow>
             </TableHead>
             <TableBody className="divide-y divide-border">
@@ -565,6 +574,18 @@ export default function TradesTable({
                 const priceKey = `${trade.assetClass}:${trade.symbol}`
                 const currentPrice = prices[priceKey]
 
+                // Unrealized P&L for a still-open trade: mark the quantity that
+                // hasn't been exited yet to the live price, off the entry fills'
+                // average cost. Only meaningful while status === 'open' — a
+                // closed trade has nothing left to mark.
+                const openQty = sumQty(entryFills) - sumQty(exitFills)
+                const avgEntryPrice = avgPrice(entryFills)
+                const unrealizedPnl =
+                  trade.status === 'open' && currentPrice != null && openQty > 0
+                    ? calculatePnl(trade.direction, avgEntryPrice, currentPrice, openQty, 0).grossPnl *
+                      multiplierFor(trade.extra, trade.symbol, trade.assetClass)
+                    : null
+
                 return (
                   <TableRow
                     key={trade.id}
@@ -587,6 +608,31 @@ export default function TradesTable({
                       ) : (
                         currentPrice.toFixed(2)
                       )}
+                    </TableCell>
+                    <TableCell className="tabular text-xs">
+                      {trade.status !== 'open' ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : currentPrice === undefined ? (
+                        <span className="text-muted-foreground">…</span>
+                      ) : unrealizedPnl === null ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <span className={cn('font-medium', unrealizedPnl >= 0 ? 'text-profit' : 'text-loss')}>
+                          {formatCurrency(unrealizedPnl, currency)}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={cn(
+                          'rounded px-1.5 py-0.5 text-xs font-medium uppercase',
+                          // Open is the state worth calling out at a glance; closed
+                          // (the common case) and cancelled both stay neutral/quiet.
+                          trade.status === 'open' ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground',
+                        )}
+                      >
+                        {t(`trades.status.${trade.status}`)}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <span
@@ -685,6 +731,17 @@ export default function TradesTable({
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
+                    </TableCell>
+                    <TableCell className="w-px whitespace-nowrap px-3" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => setQuickAddTrade(trade)}
+                        aria-label={t('trades.quickAdd.trigger')}
+                        title={t('trades.quickAdd.trigger')}
+                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
+                      >
+                        <PlusCircle className="h-4 w-4" />
+                      </button>
                     </TableCell>
                     <TableCell className="w-px whitespace-nowrap px-3" onClick={(e) => e.stopPropagation()}>
                       <ActionMenu
@@ -792,6 +849,15 @@ export default function TradesTable({
             />
           </div>
         </BulkModal>
+      )}
+
+      {quickAddTrade && (
+        <QuickAddExecutionDialog
+          trade={quickAddTrade}
+          currentPrice={prices[`${quickAddTrade.assetClass}:${quickAddTrade.symbol}`]}
+          onClose={() => setQuickAddTrade(null)}
+          onSaved={() => router.refresh()}
+        />
       )}
 
       {dialog === 'export' && (

@@ -10,6 +10,8 @@
   "col": {
     "symbol": "Symbol",
     "currentPrice": "Current price",
+    "unrealizedPnl": "Unrealized P&L",
+    "status": "Status",
     "dir": "Dir.",
     "entry": "Entry",
     "qty": "Qty",
@@ -24,6 +26,15 @@
   "review": {
     "filter": "{count, plural, one {# trade to review} other {# trades to review}}",
     "filterActive": "Showing trades to review — clear"
+  },
+  "status": {
+    "open": "Open",
+    "closed": "Closed",
+    "cancelled": "Cancelled"
+  },
+  "quickAdd": {
+    "trigger": "Add execution",
+    "title": "New execution — {symbol}"
   },
   "empty": "No trades found.",
   "emptyFilters": "Try adjusting or clearing the filters.",
@@ -194,7 +205,6 @@
       "multiplier": "Mult",
       "price": "Price",
       "commission": "Comm",
-      "fee": "Fee",
       "buy": "Buy",
       "sell": "Sell",
       "add": "Add execution",

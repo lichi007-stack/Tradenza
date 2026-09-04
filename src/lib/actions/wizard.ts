@@ -194,6 +194,12 @@ const manualTradeSchema = z.object({
   symbol: z.string().trim().min(1).max(20),
   contractMultiplier: z.coerce.number().min(0).optional(),
   executions: z.array(executionSchema).min(1),
+  // Optional pre-trade position sizing (stop price + $ risk), set from the
+  // manual-entry form's stop-based quantity calculator. Stored directly on the
+  // trade so the existing R-multiple column/stats (which already read
+  // trades.riskAmount — see updateTradeRiskPlan) pick it up with no extra wiring.
+  stopLoss: z.coerce.number().positive().optional(),
+  riskAmount: z.coerce.number().positive().optional(),
 })
 
 export type ManualTradeInput = z.infer<typeof manualTradeSchema>
@@ -264,6 +270,8 @@ export const saveManualTrade = mutationAction([manualTradeSchema], async ({ user
       fees: fees.toString(),
       grossPnl,
       netPnl,
+      stopLoss: v.stopLoss ? v.stopLoss.toString() : null,
+      riskAmount: v.riskAmount ? v.riskAmount.toString() : null,
       importSource: 'manual',
       extra: {
         executions: execs,

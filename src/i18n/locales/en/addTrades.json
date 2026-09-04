@@ -134,6 +134,11 @@
     "symbol": "Symbol",
     "symbolPlaceholder": "e.g. NQ",
     "symbolFirst": "Enter a symbol to start adding executions.",
+    "stopPrice": "Stop price, $",
+    "riskR": "Risk (R)",
+    "riskDecrease": "Decrease risk by 1R",
+    "riskIncrease": "Increase risk by 1R",
+    "riskSizingNote": "Quantity set to {qty} shares (risk ÷ |entry − stop|)",
     "createExecution": "Create new execution",
     "removeExecution": "Remove execution",
     "buy": "Buy",
@@ -161,10 +166,9 @@
       "units": "Units",
       "qty": "Quantity",
       "side": "Side",
-      "positionSize": "Position size",
+      "positionSize": "Position size, $",
       "price": "Price, $",
-      "comm": "Comm, $",
-      "fee": "Fee, $"
+      "comm": "Comm, $"
     }
   },
   "assets": {

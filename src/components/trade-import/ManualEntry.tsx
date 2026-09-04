@@ -5,8 +5,8 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { getActionErrorMessage } from '@/lib/action-error-message'
 import { handleRateLimit } from '@/components/ui/rate-limit-toast'
-import { Plus, Trash2, Loader2 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { Plus, Minus, Trash2, Loader2 } from 'lucide-react'
+import { cn, formatCurrency } from '@/lib/utils'
 import { t } from '@/i18n'
 import { saveManualTrade } from '@/lib/actions/wizard'
 import { getCurrentPrices } from '@/lib/actions/quotes'
@@ -78,12 +78,19 @@ const emptyExec = (side: 'buy' | 'sell' = 'buy', multiplier = ''): Execution => 
   side,
   price: '',
   comm: '',
-  fee: '',
+  // No input for this anymore — Comm alone covers "total per-trade cost" for
+  // this journal (see ExecutionsEditor.tsx for the fuller rationale). Kept as
+  // a field, not removed, purely so the save payload shape stays identical to
+  // what the server and the other execution editors expect.
+  fee: '0',
   commAuto: true,
   priceAuto: true,
 })
 
 const cellInput = 'w-full bg-transparent text-sm focus:outline-none placeholder:text-muted-foreground/50'
+
+/** $ risked per "R" unit in the stop-based position-size calculator below. */
+const RISK_PER_R = 100
 
 const num = (s: string) => {
   const n = parseFloat(s.replace(',', '.'))
@@ -113,6 +120,15 @@ export default function ManualEntry({
   const [execs, setExecs] = useState<Execution[]>([emptyExec()])
   const [saving, setSaving] = useState(false)
   const [livePrice, setLivePrice] = useState<number | null>(null)
+
+  // Stop-based position sizing: give a stop price + a risk budget (in "R",
+  // stepped in $100 jumps) and the entry row's quantity is solved for —
+  // qty = risk$ ÷ |entry − stop| — instead of the trader doing that math by
+  // hand. Only ever drives the first (entry) row; a second/exit row keeps its
+  // own qty logic in addRow().
+  const [stopPrice, setStopPrice] = useState('')
+  const [riskR, setRiskR] = useState(1)
+  const [qtyAuto, setQtyAuto] = useState(true)
 
   const hasSymbol = symbol.trim().length > 0
 
@@ -151,6 +167,30 @@ export default function ManualEntry({
     if (livePrice === null) return
     setExecs((rows) => rows.map((r) => (r.priceAuto && !r.price ? { ...r, price: String(livePrice) } : r)))
   }, [livePrice])
+
+  const riskDollars = riskR * RISK_PER_R
+  const entryPriceForSizing = num(execs[0]?.price ?? '')
+  const stopPriceNum = num(stopPrice)
+  const stopDistance = Math.abs(entryPriceForSizing - stopPriceNum)
+  const suggestedQty =
+    stopPriceNum > 0 && entryPriceForSizing > 0 && stopDistance > 0 && riskDollars > 0
+      ? Math.floor(riskDollars / stopDistance)
+      : null
+
+  // Drive the entry row's quantity from the calculator as long as the trader
+  // hasn't overridden it by hand — re-solving whenever the stop, the risk
+  // budget, or the (possibly live-filled) entry price changes.
+  useEffect(() => {
+    if (!qtyAuto || suggestedQty === null || suggestedQty <= 0) return
+    setExecs((rows) => {
+      const first = rows[0]
+      if (!first || first.qty === String(suggestedQty)) return rows
+      const next = { ...first, qty: String(suggestedQty) }
+      if (next.commAuto && autoCommEnabled(assetClass)) next.comm = String(calcStockCommission(suggestedQty))
+      return [next, ...rows.slice(1)]
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately not depending on execs/assetClass identity, only the solved qty
+  }, [suggestedQty, qtyAuto])
 
   const update = (id: string, patch: Partial<Execution>) =>
     setExecs((rows) =>
@@ -246,6 +286,8 @@ export default function ManualEntry({
           commission: num(e.comm),
           fee: num(e.fee),
         })),
+        stopLoss: stopPriceNum > 0 ? stopPriceNum : undefined,
+        riskAmount: riskDollars > 0 && stopPriceNum > 0 ? riskDollars : undefined,
       })
       if (handleRateLimit(res)) {
         setSaving(false)
@@ -256,6 +298,9 @@ export default function ManualEntry({
       if (addNext) {
         setSymbol('')
         setExecs([emptyExec()])
+        setStopPrice('')
+        setRiskR(1)
+        setQtyAuto(true)
         setSaving(false)
       } else {
         router.push('/trades')
@@ -321,6 +366,50 @@ export default function ManualEntry({
         </p>
       ) : (
         <>
+          {/* Stop-based position sizing: solves the entry row's quantity from a
+              stop price and a risk budget, instead of the trader doing the math. */}
+          <div className="mt-6 flex flex-wrap items-end gap-4">
+            <div className="w-36">
+              <p className="mb-2 text-xs font-medium text-primary">{t('addTrades.manual.stopPrice')}</p>
+              <input
+                inputMode="decimal"
+                value={stopPrice}
+                onChange={(e) => setStopPrice(e.target.value)}
+                placeholder="0.00"
+                className="w-full rounded-md border border-border bg-input/40 px-3 py-2.5 text-sm tabular focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium text-primary">{t('addTrades.manual.riskR')}</p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setRiskR((r) => Math.max(0, r - 1))}
+                  aria-label={t('addTrades.manual.riskDecrease')}
+                  className="rounded-md border border-border p-2.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+                <div className="w-28 rounded-md border border-border bg-input/40 px-2 py-2.5 text-center text-sm tabular">
+                  R={riskR} <span className="text-muted-foreground">({formatCurrency(riskDollars)})</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRiskR((r) => r + 1)}
+                  aria-label={t('addTrades.manual.riskIncrease')}
+                  className="rounded-md border border-border p-2.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+            {suggestedQty !== null && qtyAuto && (
+              <p className="pb-3 text-xs text-muted-foreground">
+                {t('addTrades.manual.riskSizingNote', { qty: suggestedQty })}
+              </p>
+            )}
+          </div>
+
           <TableContainer className="mt-6">
             <Table className="min-w-[56rem]">
               <TableHead>
@@ -334,7 +423,6 @@ export default function ManualEntry({
                   <TableHeaderCell className="px-3 py-2.5">{t('addTrades.manual.col.positionSize')}</TableHeaderCell>
                   <TableHeaderCell className="px-3 py-2.5">{t('addTrades.manual.col.price')}</TableHeaderCell>
                   <TableHeaderCell className="px-3 py-2.5">{t('addTrades.manual.col.comm')}</TableHeaderCell>
-                  <TableHeaderCell className="px-3 py-2.5">{t('addTrades.manual.col.fee')}</TableHeaderCell>
                   <TableHeaderCell className="w-16 py-2.5 pl-3 pr-5" />
                 </TableHeadRow>
               </TableHead>
@@ -357,7 +445,13 @@ export default function ManualEntry({
                       <input
                         inputMode="decimal"
                         value={r.qty}
-                        onChange={(e) => update(r.id, { qty: e.target.value })}
+                        onChange={(e) => {
+                          // Typing into the entry row's own qty is a manual
+                          // override — stop letting the stop/risk calculator
+                          // below overwrite it.
+                          if (execs[0]?.id === r.id) setQtyAuto(false)
+                          update(r.id, { qty: e.target.value })
+                        }}
                         placeholder="0"
                         className={cn(cellInput, 'tabular')}
                       />
@@ -383,15 +477,19 @@ export default function ManualEntry({
                         ))}
                       </div>
                     </TableCell>
-                    <TableCell className="px-3 py-2 w-24 tabular text-sm">
+                    <TableCell className="px-3 py-2 w-28 tabular text-sm">
                       {(() => {
+                        // Position size = quantity × price for this fill (not the
+                        // share/contract count alone) — positive for a BUY,
+                        // negative for a SELL.
                         const q = num(r.qty)
-                        if (q <= 0) return <span className="text-muted-foreground">—</span>
-                        const signed = r.side === 'buy' ? q : -q
+                        const p = num(r.price)
+                        if (q <= 0 || p <= 0) return <span className="text-muted-foreground">—</span>
+                        const signed = (r.side === 'buy' ? q : -q) * p
                         return (
                           <span className={signed >= 0 ? 'text-profit' : 'text-loss'}>
                             {signed >= 0 ? '+' : ''}
-                            {signed}
+                            {formatCurrency(signed)}
                           </span>
                         )
                       })()}
@@ -414,15 +512,6 @@ export default function ManualEntry({
                         className={cn(cellInput, 'tabular')}
                       />
                     </TableCell>
-                    <TableCell className="px-3 py-2 w-24">
-                      <input
-                        inputMode="decimal"
-                        value={r.fee}
-                        onChange={(e) => update(r.id, { fee: e.target.value })}
-                        placeholder="0.00"
-                        className={cn(cellInput, 'tabular')}
-                      />
-                    </TableCell>
                     <TableCell className="w-16 pl-3 pr-4 py-2 text-center">
                       <button
                         type="button"
@@ -437,7 +526,7 @@ export default function ManualEntry({
                   </TableRow>
                 ))}
                 <TableRow className="border-b-0 border-t border-border">
-                  <TableCell colSpan={9} className="px-4 py-3">
+                  <TableCell colSpan={8} className="px-4 py-3">
                     <button
                       type="button"
                       onClick={addRow}

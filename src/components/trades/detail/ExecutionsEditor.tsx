@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { getActionErrorMessage } from '@/lib/action-error-message'
@@ -11,6 +11,7 @@ import { t, tRich } from '@/i18n'
 import { useConfirm } from '@/components/providers/ConfirmProvider'
 import { useSelection } from '@/hooks/useSelection'
 import { updateTradeExecutions } from '@/lib/actions/trades'
+import { getCurrentPrices } from '@/lib/actions/quotes'
 import { editorDefaultMultiplier } from '@/lib/futures'
 import { calcStockCommission } from '@/lib/commission'
 import DateTimeField from '@/components/ui/DateTimeField'
@@ -78,6 +79,27 @@ export default function ExecutionsEditor({ trade, executions }: { trade: Trade; 
   const [isNew, setIsNew] = useState(false)
   const sel = useSelection()
   const [saving, setSaving] = useState(false)
+  const [livePrice, setLivePrice] = useState<number | null>(null)
+
+  // Best-effort current price for this trade's symbol, so a new execution
+  // (almost always "close out the rest of the position") can default its
+  // price field to what the market is doing right now instead of blank —
+  // same free-source lookup as the trades table / manual-entry form.
+  useEffect(() => {
+    let cancelled = false
+    getCurrentPrices([{ assetClass: trade.assetClass, symbol: trade.symbol }])
+      .then((prices) => {
+        if (cancelled) return
+        const price = prices?.[`${trade.assetClass}:${trade.symbol}`]
+        setLivePrice(typeof price === 'number' ? price : null)
+      })
+      .catch(() => {
+        if (!cancelled) setLivePrice(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [trade.assetClass, trade.symbol])
 
   const { entrySide, openQty } = useMemo(() => positionOf(rows), [rows])
   const isOpen = openQty > 0
@@ -144,9 +166,12 @@ export default function ExecutionsEditor({ trade, executions }: { trade: Trade; 
       datetime: toLocalInput(new Date()),
       side: isOpen ? closingSide : entrySide,
       qty,
-      price: '',
+      price: livePrice !== null ? String(livePrice) : '',
       comm: autoComm && num(qty) > 0 ? String(calcStockCommission(num(qty))) : '',
-      fee: '',
+      // No UI for this anymore — Comm alone is the per-trade cost field for
+      // this journal (Comm vs. Fee turned out to be a distinction without a
+      // difference here: everything downstream just sums the two).
+      fee: '0',
       commAuto: true,
     })
   }
@@ -297,15 +322,6 @@ export default function ExecutionsEditor({ trade, executions }: { trade: Trade; 
               inputMode="decimal"
               value={draft.comm}
               onChange={(e) => patch({ comm: e.target.value })}
-              className={cellCls}
-            />
-          </div>
-          <div>
-            <label className={miniLabel}>{t('trades.detail.exec.fee')}</label>
-            <input
-              inputMode="decimal"
-              value={draft.fee}
-              onChange={(e) => patch({ fee: e.target.value })}
               className={cellCls}
             />
           </div>
